@@ -23,9 +23,17 @@ from typing import Optional
 
 from livekit import agents
 from livekit.agents import Agent, AgentSession, RunContext, function_tool
-from livekit.plugins import deepgram, elevenlabs, openai, silero
+from livekit.plugins import openai, silero
 
-from saathi.config import LLM_MODEL, SAATHI_ROOM_NAME, STT_MODEL, TTS_VOICE_ID
+from saathi.config import (
+    DEEPGRAM_STT_MODEL,
+    ELEVENLABS_VOICE_ID,
+    LLM_MODEL,
+    OPENAI_TTS_VOICE,
+    SAATHI_ROOM_NAME,
+    STT_PROVIDER,
+    TTS_PROVIDER,
+)
 from saathi.contacts import ContactNotFoundError, ContactsRegistry
 from saathi.calling.sip import CallError, hang_up, place_call
 from saathi.logging_setup import get_logger
@@ -151,14 +159,32 @@ class Saathi(Agent):
         return "Hung up."
 
 
+def _build_stt():
+    """Plugins are imported lazily so an unused provider's package never
+    has to be installed — the whole point of starting on one key."""
+    if STT_PROVIDER == "deepgram":
+        from livekit.plugins import deepgram
+
+        return deepgram.STT(model=DEEPGRAM_STT_MODEL)
+    return openai.STT()
+
+
+def _build_tts():
+    if TTS_PROVIDER == "elevenlabs":
+        from livekit.plugins import elevenlabs
+
+        return elevenlabs.TTS(voice_id=ELEVENLABS_VOICE_ID) if ELEVENLABS_VOICE_ID else elevenlabs.TTS()
+    return openai.TTS(voice=OPENAI_TTS_VOICE)
+
+
 async def entrypoint(ctx: agents.JobContext) -> None:
     contacts = ContactsRegistry()
     music = MusicPlayer()
 
     session = AgentSession(
-        stt=deepgram.STT(model=STT_MODEL),
+        stt=_build_stt(),
         llm=openai.LLM(model=LLM_MODEL),
-        tts=elevenlabs.TTS(voice_id=TTS_VOICE_ID) if TTS_VOICE_ID else elevenlabs.TTS(),
+        tts=_build_tts(),
         vad=silero.VAD.load(),
     )
 

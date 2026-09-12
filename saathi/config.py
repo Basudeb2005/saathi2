@@ -47,9 +47,17 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
+# Providers are swappable so you can start with one key and upgrade the
+# pieces that actually bother you. OpenAI does all three adequately;
+# Deepgram is noticeably faster at STT and ElevenLabs noticeably better
+# at multilingual TTS, which is the reason to add them — later.
+STT_PROVIDER = os.getenv("STT_PROVIDER", "openai").lower()    # openai | deepgram
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "openai").lower()    # openai | elevenlabs
+
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
-STT_MODEL = os.getenv("STT_MODEL", "nova-3")
-TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "")
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
+OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "shimmer")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
 # ---- Mopidy ------------------------------------------------------------
 # Mopidy runs on this same Pi and owns audio output. We drive it over its

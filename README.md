@@ -127,26 +127,27 @@ reliable, which is why every shipped one is three syllables.
 
 ## Setup
 
+**[SETUP.md](SETUP.md)** walks through it end to end — keys, the Pi,
+music, the first conversation, then calling.
+
+You need **one API key** to start (OpenAI does LLM, STT and TTS) plus a
+free LiveKit Cloud project. Deepgram, ElevenLabs and Picovoice are
+upgrades you add later, if and when something bothers you.
+
 ```bash
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 
-cp .env.example .env              # fill in LiveKit + model keys
+cp .env.example .env              # two keys
 cp contacts.json.example contacts.json
 
 ./venv/bin/python -m saathi.agent dev
 ```
 
-You also need, separately:
-
-- **Mopidy** on the same Pi (`mopidy`, `mopidy-youtube`), with its HTTP
-  frontend on `:6680`.
-- **A LiveKit server** — self-hosted is free and Apache-2.0, but it needs
-  to be somewhere your family can reach, so a small VPS rather than the
-  Pi itself.
-- **A SIP server** (Asterisk, Kamailio) with an account per family member
-  for them to register Linphone against, plus a LiveKit outbound trunk
-  pointing at it.
+Also needed, separately: **Mopidy** on the same Pi for music, and — for
+calling — a free [Linphone](https://linphone.org) SIP account per family
+member plus a LiveKit outbound trunk. SETUP.md §5 covers the whole chain,
+including the step most likely to fail.
 
 ## Tests
 

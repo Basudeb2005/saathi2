@@ -1,5 +1,8 @@
 # Agent runtime
-livekit-agents[openai,deepgram,elevenlabs,silero]~=1.0
+# openai+silero is all you need to start; add the others only if you
+# switch STT_PROVIDER/TTS_PROVIDER.
+livekit-agents[openai,silero]~=1.0
+# livekit-agents[deepgram,elevenlabs]
 livekit-api~=0.8
 
 # Wake word (runs on-device). openwakeword is the default and needs

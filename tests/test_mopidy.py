@@ -1,0 +1,68 @@
+import pytest
+
+from saathi.music.mopidy import MopidyClient, MopidyError
+from tests.fakes import FakeSession, rpc_error, rpc_ok
+
+
+def client(responses):
+    return MopidyClient(url="http://localhost:6680/mopidy/rpc", session=FakeSession(responses))
+
+
+def test_play_uris_clears_then_adds_then_plays():
+    session = FakeSession([rpc_ok(), rpc_ok(), rpc_ok()])
+    MopidyClient(session=session).play_uris(["youtube:video/abc"])
+    methods = [c["json"]["method"] for c in session.calls]
+    assert methods == ["core.tracklist.clear", "core.tracklist.add", "core.playback.play"]
+
+
+def test_play_uris_rejects_empty_list():
+    with pytest.raises(MopidyError):
+        client([]).play_uris([])
+
+
+def test_jsonrpc_error_becomes_mopidy_error():
+    with pytest.raises(MopidyError, match="rejected"):
+        client([rpc_error("no such method")]).stop()
+
+
+def test_unreachable_server_names_the_url():
+    import requests
+
+    session = FakeSession([requests.ConnectionError("refused")])
+    with pytest.raises(MopidyError, match="mopidy service"):
+        MopidyClient(session=session).stop()
+
+
+def test_search_returns_uris_in_order():
+    payload = rpc_ok([
+        {"tracks": [{"uri": "youtube:video/a"}, {"uri": "youtube:video/b"}]},
+    ])
+    assert client([payload]).search_tracks("lata") == ["youtube:video/a", "youtube:video/b"]
+
+
+def test_search_respects_limit_across_backends():
+    payload = rpc_ok([
+        {"tracks": [{"uri": f"youtube:video/{i}"} for i in range(10)]},
+    ])
+    assert len(client([payload]).search_tracks("lata", limit=3)) == 3
+
+
+def test_search_with_no_results_is_empty_not_an_error():
+    assert client([rpc_ok([])]).search_tracks("nonsense") == []
+
+
+def test_current_track_name_combines_artist_and_title():
+    payload = rpc_ok({"name": "Lag Ja Gale", "artists": [{"name": "Lata Mangeshkar"}]})
+    assert client([payload]).current_track_name() == "Lata Mangeshkar - Lag Ja Gale"
+
+
+def test_current_track_name_is_none_when_nothing_loaded():
+    assert client([rpc_ok(None)]).current_track_name() is None
+
+
+def test_volume_is_clamped():
+    session = FakeSession([rpc_ok(), rpc_ok()])
+    c = MopidyClient(session=session)
+    c.set_volume(500)
+    c.set_volume(-20)
+    assert [call["json"]["params"]["volume"] for call in session.calls] == [100, 0]

@@ -1,0 +1,17 @@
+{
+  "daughter": {
+    "transport": "sip",
+    "address": "sip:priya@saathi.example.com",
+    "label": "your daughter"
+  },
+  "son": {
+    "transport": "sip",
+    "address": "sip:arjun@saathi.example.com",
+    "label": "your son"
+  },
+  "doctor": {
+    "transport": "pstn",
+    "address": "+15551234567",
+    "label": "Dr. Rao's clinic"
+  }
+}

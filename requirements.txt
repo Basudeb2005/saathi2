@@ -1,0 +1,14 @@
+# Agent runtime
+livekit-agents[openai,deepgram,elevenlabs,silero]~=1.0
+livekit-api~=0.8
+
+# Wake word (runs on-device)
+openwakeword
+numpy
+
+# Music + config
+requests
+python-dotenv
+
+# Tests
+pytest

@@ -2,9 +2,11 @@
 livekit-agents[openai,deepgram,elevenlabs,silero]~=1.0
 livekit-api~=0.8
 
-# Wake word (runs on-device)
+# Wake word (runs on-device). openwakeword is the default and needs
+# no account; pvporcupine is only needed for WAKE_ENGINE=porcupine.
 openwakeword
 numpy
+# pvporcupine
 
 # Music + config
 requests

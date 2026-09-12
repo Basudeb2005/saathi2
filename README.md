@@ -5,7 +5,7 @@ ask it to call your family. "Saathi" is Hindi for *companion*.
 
 Three things, all by voice:
 
-- **Wake word** — "hey Saathi", "hey boy", or "hello boy".
+- **Wake word** — on-device, with nothing to train.
 - **Conversation** — streaming, interruptible. You can talk over it.
 - **Music** — free internet radio by default, specific songs on demand.
 - **Calling** — it rings the family member's actual phone. Free when they
@@ -57,7 +57,7 @@ saathi/
     player.py        "play me something" -> something audible
   calling/
     sip.py           add a SIP participant to the room
-  wake.py            on-device wake word: "hey saathi" / "hey boy" / "hello boy"
+  wake.py            on-device wake word (openWakeWord or Porcupine)
 ```
 
 ### Contacts decide what a call costs
@@ -91,29 +91,39 @@ Everything else is a cloud API — a local LLM on a Pi measures 5–8 seconds
 per turn, which is fine for "what's the weather" and useless for
 conversation. But wake detection is always listening, so shipping every
 second of household audio to a cloud service is both a privacy problem
-and a bandwidth one. [openWakeWord](https://github.com/dscripka/openWakeWord)
-is small enough to run continuously on a Pi and only wakes the expensive
-pipeline once it hears its name.
+and a bandwidth one.
 
-**You have to train the models.** None of these three are words
-openWakeWord ships. Its synthetic-data notebook trains one in about an
-hour with no recordings needed; save each as
-`wake_models/<word_with_underscores>.onnx`. Until then `saathi.wake`
-raises with that instruction rather than quietly falling back to
-"hey jarvis".
+**Nothing here needs training.** Two engines, because "no training" and
+"it should answer to Saathi" pull in opposite directions:
 
-Test one in the actual room before wiring it up:
+| | [openWakeWord](https://github.com/dscripka/openWakeWord) (default) | [Porcupine](https://github.com/Picovoice/porcupine) |
+|---|---|---|
+| Setup | `pip install`, done | free account + key |
+| Words | `alexa`, `hey_mycroft`, `hey_jarvis`, `hey_rhasspy` | built-ins, **or your own phrase** |
+| "Hey Saathi"? | no | yes — type it in the console, get a `.ppn` in seconds |
+| Offline | fully | after init |
+
+Start on openWakeWord with **`hey_jarvis`**. It's the most distinctive of
+the four — three syllables and an uncommon phoneme run — and unlike
+`alexa` it won't fire every time the television says it. Models download
+themselves on first run.
+
+When the name starts to matter, generate a "Hey Saathi" at
+[console.picovoice.ai](https://console.picovoice.ai), drop the `.ppn` in
+`wake_models/`, and switch `WAKE_ENGINE=porcupine`. Still no training —
+you type the phrase and it hands you the model.
+
+Either way, test it in the real room, at the real distance, with the
+television on, before wiring it up:
 
 ```bash
 python -m saathi.wake     # prints every detection and its score
 ```
 
-**"hey boy" and "hello boy" will misfire.** They're short, common English
-words, so they'll trigger on ordinary conversation and on television.
-They ship at a threshold of 0.75 against "hey saathi"'s 0.5 for exactly
-that reason — and if they still interrupt people, raise them rather than
-living with it. "Hey Saathi" is three syllables with an uncommon phoneme
-run, which is what makes a wake word reliable.
+A note on picking a phrase, if you generate your own: short common words
+("hey boy", "hello boy") fire constantly on ordinary conversation and on
+television. Length and uncommon sounds are what make a wake word
+reliable, which is why every shipped one is three syllables.
 
 ## Setup
 
@@ -144,7 +154,7 @@ You also need, separately:
 ./venv/bin/pytest -q
 ```
 
-57 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
+65 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
 is faked.
 
 ## What is and isn't proven

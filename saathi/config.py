@@ -76,8 +76,18 @@ RADIO_TIMEOUT_S = float(os.getenv("RADIO_TIMEOUT_S", "10"))
 # ---- Wake word ---------------------------------------------------------
 # The only model that runs on the Pi itself. Everything above is cloud;
 # this can't be, because it is always listening.
-WAKE_MODEL_DIR = Path(os.getenv("WAKE_MODEL_DIR", ROOT_DIR / "wake_models"))
-WAKE_WORDS = [w.strip() for w in os.getenv("WAKE_WORDS", "hey saathi,hey boy,hello boy").split(",") if w.strip()]
+#
+# Two engines, because "no training" and "it should answer to Saathi"
+# pull in opposite directions:
+#
+#   openwakeword — pretrained models, no account, no key, fully offline.
+#                  Works the moment you pip install. You get its words,
+#                  not yours. This is the default.
+#   porcupine    — type "Hey Saathi" into Picovoice's console and it
+#                  hands you a .ppn in seconds. Still no training, but it
+#                  needs a free account and an access key.
+WAKE_ENGINE = os.getenv("WAKE_ENGINE", "openwakeword").lower()
+
 WAKE_REFRACTORY_S = float(os.getenv("WAKE_REFRACTORY_S", "2.0"))
 
 # ALSA capture device, e.g. "plughw:3,0". Leave unset to use the ALSA
@@ -85,19 +95,23 @@ WAKE_REFRACTORY_S = float(os.getenv("WAKE_REFRACTORY_S", "2.0"))
 # move across reboots and replugs.
 WAKE_CAPTURE_DEVICE = os.getenv("WAKE_CAPTURE_DEVICE")
 
-# Per-word confidence thresholds, 0-1. These are not one number on
-# purpose. "hey saathi" is three syllables with an uncommon phoneme run,
-# so it can sit low without false-firing. "hey boy" and "hello boy" are
-# short, extremely common English words — they will trigger on ordinary
-# conversation and on television unless held to a much higher bar. If
-# they still misfire, raise them further rather than living with a
-# speaker that interrupts people.
-_DEFAULT_THRESHOLDS = {
-    "hey saathi": 0.5,
-    "hey boy": 0.75,
-    "hello boy": 0.75,
-}
-WAKE_THRESHOLDS = {
-    word: float(os.getenv(f"WAKE_THRESHOLD_{word.replace(' ', '_').upper()}", _DEFAULT_THRESHOLDS.get(word, 0.6)))
-    for word in WAKE_WORDS
-}
+# --- openwakeword -------------------------------------------------------
+# Ships pretrained: alexa, hey mycroft, hey jarvis, hey rhasspy, plus two
+# phrase models. openwakeword.utils.download_models() fetches them on
+# first run, so there is nothing to train and nothing to sign up for.
+# "hey jarvis" is the default because it's the most distinctive of the
+# four — three syllables, uncommon phoneme run, and unlike "alexa" it
+# won't fire every time the television says it.
+OWW_WORDS = [w.strip() for w in os.getenv("OWW_WORDS", "hey_jarvis").split(",") if w.strip()]
+OWW_THRESHOLD = float(os.getenv("OWW_THRESHOLD", "0.5"))
+
+# --- porcupine ----------------------------------------------------------
+# Free for personal use; the key comes from console.picovoice.ai.
+PORCUPINE_ACCESS_KEY = os.getenv("PORCUPINE_ACCESS_KEY")
+# Custom .ppn files (e.g. a "Hey Saathi" you generated). Comma-separated.
+PORCUPINE_KEYWORD_PATHS = [p.strip() for p in os.getenv("PORCUPINE_KEYWORD_PATHS", "").split(",") if p.strip()]
+# Built-in keywords, used when no custom .ppn is configured. "jarvis",
+# "computer", "bumblebee" and friends need no file at all.
+PORCUPINE_KEYWORDS = [k.strip() for k in os.getenv("PORCUPINE_KEYWORDS", "jarvis").split(",") if k.strip()]
+# 0-1. Higher catches more and false-fires more.
+PORCUPINE_SENSITIVITY = float(os.getenv("PORCUPINE_SENSITIVITY", "0.5"))

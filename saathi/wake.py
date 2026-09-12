@@ -3,22 +3,22 @@ Wake word detection — the only part of Saathi that runs on-device.
 
 It has to be local: this is always listening, so shipping every second of
 household audio to a cloud API is both a privacy problem and a bandwidth
-one. openWakeWord is small enough to run continuously on a Pi and only
-wakes the expensive cloud pipeline once it hears its name.
+one.
+
+Neither engine here needs you to train anything.
+
+  openWakeWord (default) ships pretrained models — alexa, hey mycroft,
+  hey jarvis, hey rhasspy — and downloads them on first run. No account,
+  no key, fully offline. The catch is that you get its words, not yours.
+
+  Porcupine will make you a "Hey Saathi" in seconds: type the phrase into
+  Picovoice's console and it hands back a .ppn. Still no training, but it
+  wants a free account and an access key.
 
 Audio comes from `arecord` rather than PyAudio — one less compiled
-dependency on a Pi, and it's the same tool the rest of the system already
-assumes. openWakeWord wants 16kHz mono 16-bit frames of 1280 samples
-(80ms), which is exactly what we ask ALSA for, so there's no resampling
-anywhere in this path.
-
-Two pieces of logic worth knowing about:
-
-  - **Refractory period.** A single spoken "hey Saathi" produces a run of
-    high scores across consecutive frames, not one. Without a cooldown
-    after firing, one greeting starts several sessions.
-  - **Per-model thresholds.** "hey saathi" and "hey boy" are not equally
-    hard to hear (see MODELS below), so they don't share a number.
+dependency on a Pi. Both engines want 16kHz mono 16-bit, so there is no
+resampling in this path; they differ only in frame size, which each
+engine reports and `listen()` reads from.
 """
 from __future__ import annotations
 
@@ -30,23 +30,25 @@ from typing import Callable, Dict, Iterator, List, Optional
 import numpy as np
 
 from saathi.config import (
+    OWW_THRESHOLD,
+    OWW_WORDS,
+    PORCUPINE_ACCESS_KEY,
+    PORCUPINE_KEYWORD_PATHS,
+    PORCUPINE_KEYWORDS,
+    PORCUPINE_SENSITIVITY,
     WAKE_CAPTURE_DEVICE,
-    WAKE_MODEL_DIR,
+    WAKE_ENGINE,
     WAKE_REFRACTORY_S,
-    WAKE_THRESHOLDS,
-    WAKE_WORDS,
 )
 from saathi.logging_setup import get_logger
 
 log = get_logger("wake")
 
 SAMPLE_RATE = 16000
-FRAME_SAMPLES = 1280           # 80ms — openWakeWord's expected frame size
-FRAME_BYTES = FRAME_SAMPLES * 2
 
 
 class WakeWordError(Exception):
-    """Models missing or unloadable, or the mic couldn't be opened."""
+    """The engine couldn't be built, or the mic couldn't be opened."""
 
 
 @dataclass
@@ -61,7 +63,11 @@ class WakeGate:
 
     Separated out because this is where the bugs actually live — a
     threshold comparison and a cooldown clock — and testing it shouldn't
-    require a microphone or a trained model.
+    require a microphone or a model.
+
+    The cooldown matters more than it looks: a single spoken "hey Jarvis"
+    scores high across a run of consecutive frames, not one, so without a
+    refractory period one greeting starts several sessions.
     """
 
     def __init__(
@@ -78,9 +84,9 @@ class WakeGate:
     def consider(self, scores: Dict[str, float]) -> Optional[Detection]:
         """Return a Detection if these frame scores should wake Saathi.
 
-        When several models cross at once — "hey boy" and "hello boy"
-        overlap heavily by design — the highest score wins rather than
-        whichever happens to be first in the dict.
+        When several models cross at once — similar-sounding words overlap
+        by design — the highest score wins rather than whichever happens
+        to come first in the dict.
         """
         now = self._clock()
 
@@ -104,40 +110,124 @@ class WakeGate:
 
     def reset(self) -> None:
         """Clear the cooldown — call this when a session ends, so someone
-        can say "hey Saathi" again immediately."""
+        can say the wake word again immediately."""
         self._last_fire = None
 
 
-def _model_path(word: str):
-    return WAKE_MODEL_DIR / f"{word.replace(' ', '_')}.onnx"
+class OpenWakeWordEngine:
+    """Pretrained, offline, no account. The default.
 
-
-def load_model(words: Optional[List[str]] = None):
-    """Load openWakeWord with Saathi's custom models.
-
-    These are not the models openWakeWord ships with. "hey saathi",
-    "hey boy" and "hello boy" all have to be trained — openWakeWord's
-    synthetic-data notebook does it in about an hour per word, with no
-    recordings needed. Until those .onnx files exist in WAKE_MODEL_DIR
-    this raises, rather than silently falling back to "hey jarvis".
+    Downloads its models on first construction. `hey_jarvis` is the
+    default word because it's the most distinctive of the four shipped:
+    unlike "alexa" it won't fire every time the television says it.
     """
-    words = words or WAKE_WORDS
-    missing = [w for w in words if not _model_path(w).exists()]
-    if missing:
-        raise WakeWordError(
-            f"No wake model for {', '.join(repr(w) for w in missing)} in {WAKE_MODEL_DIR}. "
-            f"Train them with openWakeWord's synthetic-data notebook and save each as "
-            f"<word_with_underscores>.onnx"
-        )
 
-    try:
-        from openwakeword.model import Model
-    except ImportError as e:
-        raise WakeWordError("openwakeword isn't installed — pip install openwakeword") from e
+    frame_samples = 1280  # 80ms, what openWakeWord expects
 
-    paths = [str(_model_path(w)) for w in words]
-    log.info("Loading wake models: %s", ", ".join(paths))
-    return Model(wakeword_models=paths, inference_framework="onnx")
+    def __init__(self, words: Optional[List[str]] = None, threshold: float = OWW_THRESHOLD, model=None):
+        self.words = words or OWW_WORDS
+        self.gate = WakeGate(thresholds={w: threshold for w in self.words})
+
+        if model is not None:
+            self.model = model
+            return
+
+        try:
+            import openwakeword
+            from openwakeword.model import Model
+        except ImportError as e:
+            raise WakeWordError("openwakeword isn't installed — pip install openwakeword") from e
+
+        # Idempotent, and a no-op once they're cached.
+        log.info("Ensuring pretrained wake models are downloaded")
+        openwakeword.utils.download_models()
+
+        try:
+            self.model = Model(wakeword_models=list(self.words), inference_framework="onnx")
+        except Exception as e:
+            raise WakeWordError(
+                f"Couldn't load wake models {self.words}. Pretrained names are: "
+                f"alexa, hey_mycroft, hey_jarvis, hey_rhasspy. ({e})"
+            ) from e
+
+    def process(self, frame: np.ndarray) -> Optional[Detection]:
+        return self.gate.consider(self.model.predict(frame))
+
+    def reset(self) -> None:
+        self.gate.reset()
+
+
+class PorcupineEngine:
+    """Picovoice Porcupine — the way to get a real "Hey Saathi".
+
+    Built-in keywords ("jarvis", "computer", "bumblebee", ...) need no
+    file. A custom phrase is generated in the console and dropped in as a
+    .ppn; either way there is nothing for you to train.
+
+    No WakeGate here: Porcupine already emits one detection per utterance
+    rather than a run of scores, so a cooldown would be redundant.
+    """
+
+    def __init__(self, handle=None):
+        if handle is not None:
+            self._porcupine = handle
+            self._labels = [f"keyword_{i}" for i in range(64)]
+            return
+
+        if not PORCUPINE_ACCESS_KEY:
+            raise WakeWordError(
+                "PORCUPINE_ACCESS_KEY isn't set. Get a free one at console.picovoice.ai, "
+                "or switch to WAKE_ENGINE=openwakeword, which needs no account."
+            )
+
+        try:
+            import pvporcupine
+        except ImportError as e:
+            raise WakeWordError("pvporcupine isn't installed — pip install pvporcupine") from e
+
+        if PORCUPINE_KEYWORD_PATHS:
+            kwargs = {"keyword_paths": PORCUPINE_KEYWORD_PATHS}
+            self._labels = [p.split("/")[-1].removesuffix(".ppn") for p in PORCUPINE_KEYWORD_PATHS]
+        else:
+            kwargs = {"keywords": PORCUPINE_KEYWORDS}
+            self._labels = list(PORCUPINE_KEYWORDS)
+
+        log.info("Loading Porcupine keywords: %s", ", ".join(self._labels))
+        try:
+            self._porcupine = pvporcupine.create(
+                access_key=PORCUPINE_ACCESS_KEY,
+                sensitivities=[PORCUPINE_SENSITIVITY] * len(self._labels),
+                **kwargs,
+            )
+        except Exception as e:
+            raise WakeWordError(f"Couldn't start Porcupine: {e}") from e
+
+    @property
+    def frame_samples(self) -> int:
+        return self._porcupine.frame_length
+
+    def process(self, frame: np.ndarray) -> Optional[Detection]:
+        index = self._porcupine.process(frame)
+        if index < 0:
+            return None
+        word = self._labels[index] if index < len(self._labels) else f"keyword_{index}"
+        log.info("Wake word %r fired", word)
+        # Porcupine reports a hit, not a confidence — 1.0 rather than a
+        # fabricated number that would read as a real score.
+        return Detection(word=word, score=1.0)
+
+    def reset(self) -> None:
+        pass
+
+
+def build_engine(name: Optional[str] = None):
+    """Pick an engine by name. Defaults to WAKE_ENGINE from the config."""
+    name = (name or WAKE_ENGINE).lower()
+    if name == "openwakeword":
+        return OpenWakeWordEngine()
+    if name == "porcupine":
+        return PorcupineEngine()
+    raise WakeWordError(f"Unknown WAKE_ENGINE {name!r} — use 'openwakeword' or 'porcupine'")
 
 
 def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
@@ -151,26 +241,25 @@ def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
         raise WakeWordError("arecord not found — install alsa-utils") from e
 
 
-def listen(model=None, gate: Optional[WakeGate] = None, device: Optional[str] = None) -> Iterator[Detection]:
-    """Yield a Detection every time someone says one of the wake words.
+def listen(engine=None, device: Optional[str] = None) -> Iterator[Detection]:
+    """Yield a Detection every time someone says the wake word.
 
     Runs until the caller stops consuming it. Each yield is one wake, with
-    the cooldown already applied — a consumer can just loop over this and
+    any cooldown already applied — a consumer can just loop over this and
     start a session per item.
     """
-    model = model or load_model()
-    gate = gate or WakeGate(thresholds=WAKE_THRESHOLDS)
+    engine = engine or build_engine()
+    frame_bytes = engine.frame_samples * 2
     proc = _spawn_arecord(device if device is not None else WAKE_CAPTURE_DEVICE)
 
     try:
         while True:
-            chunk = proc.stdout.read(FRAME_BYTES)
-            if not chunk or len(chunk) < FRAME_BYTES:
+            chunk = proc.stdout.read(frame_bytes)
+            if not chunk or len(chunk) < frame_bytes:
                 log.warning("Mic stream ended")
                 return
 
-            frame = np.frombuffer(chunk, dtype=np.int16)
-            detection = gate.consider(model.predict(frame))
+            detection = engine.process(np.frombuffer(chunk, dtype=np.int16))
             if detection:
                 yield detection
     finally:
@@ -180,11 +269,16 @@ def listen(model=None, gate: Optional[WakeGate] = None, device: Optional[str] = 
 
 def main() -> None:
     """`python -m saathi.wake` — print detections. The fastest way to find
-    out whether a freshly trained model is any good in the actual room,
-    before wiring it to anything."""
-    print(f"Listening for: {', '.join(WAKE_WORDS)}   (ctrl-c to stop)")
+    out whether a wake word actually works in the real room, at the real
+    distance, with the television on."""
     try:
-        for detection in listen():
+        engine = build_engine()
+    except WakeWordError as e:
+        raise SystemExit(f"error: {e}")
+
+    print(f"Listening via {WAKE_ENGINE}   (ctrl-c to stop)")
+    try:
+        for detection in listen(engine):
             print(f"  {detection.word}  {detection.score:.3f}")
     except WakeWordError as e:
         raise SystemExit(f"error: {e}")

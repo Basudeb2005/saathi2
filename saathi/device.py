@@ -35,6 +35,11 @@ from typing import Callable, Optional
 
 from saathi.config import (
     AUDIO_OUTPUT_DEVICE,
+    HALF_DUPLEX,
+    HALF_DUPLEX_HANGOVER_S,
+    VOICE_TRIGGER_MS,
+    VOICE_TRIGGER_RMS,
+    WAKE_MODE,
     DEVICE_FRAME_MS,
     DEVICE_IDENTITY,
     DEVICE_SAMPLE_RATE,
@@ -72,6 +77,34 @@ def is_speech(pcm: bytes, threshold: int = SPEECH_RMS_THRESHOLD) -> bool:
     if not pcm:
         return False
     return audioop.rms(pcm, 2) > threshold
+
+
+class FarEnd:
+    """Tracks when the other side last made a sound.
+
+    Used for two different things at once: keeping the session alive, and
+    muting our microphone while the agent talks. Without the mute the mic
+    hears the speaker, the agent transcribes its own voice and answers
+    itself — which is what the gibberish is.
+    """
+
+    def __init__(self, hangover_s: float = HALF_DUPLEX_HANGOVER_S,
+                 clock: Callable[[], float] = time.monotonic):
+        self.hangover_s = hangover_s
+        self._clock = clock
+        self._last_sound: Optional[float] = None
+
+    def heard(self) -> None:
+        self._last_sound = self._clock()
+
+    @property
+    def speaking(self) -> bool:
+        """True while the agent's voice is still in the room — including
+        a tail after the last frame, for the speaker's decay and the
+        room's reverb."""
+        if self._last_sound is None:
+            return False
+        return (self._clock() - self._last_sound) < self.hangover_s
 
 
 class IdleTimer:
@@ -161,13 +194,14 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
 
     room = rtc.Room()
     timer = IdleTimer()
+    far_end = FarEnd()
     players: list[subprocess.Popen] = []
 
     @room.on("track_subscribed")
     def _on_track(track, publication, participant):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             log.info("Hearing %s", participant.identity)
-            asyncio.create_task(_play(rtc.AudioStream(track), timer, players))
+            asyncio.create_task(_play(rtc.AudioStream(track), timer, players, far_end))
 
     log.info("Joining room=%s as %s at %s", room_name, DEVICE_IDENTITY, LIVEKIT_URL)
     try:
@@ -207,7 +241,7 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
     log.info("Listening — say something. Session ends after %.0fs of quiet.", SESSION_IDLE_TIMEOUT_S)
     try:
-        await _pump_mic(mic, source, timer, rtc)
+        await _pump_mic(mic, source, timer, rtc, far_end)
     finally:
         _stop(mic)
         for p in players:
@@ -216,7 +250,7 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
         log.info("Left room=%s", room_name)
 
 
-async def _pump_mic(mic, source, timer: IdleTimer, rtc) -> None:
+async def _pump_mic(mic, source, timer: IdleTimer, rtc, far_end: "FarEnd") -> None:
     """Mic -> LiveKit, until the room goes quiet.
 
     The blocking read runs in a thread so it never stalls the event loop —
@@ -246,7 +280,12 @@ async def _pump_mic(mic, source, timer: IdleTimer, rtc) -> None:
             log.warning("Mic stream ended")
             return
 
-        if is_speech(pcm):
+        if HALF_DUPLEX and far_end.speaking:
+            # Publish silence rather than stopping: the track staying live
+            # keeps the far end's turn detection from treating a dropped
+            # stream as us hanging up.
+            pcm = b"\x00" * FRAME_BYTES
+        elif is_speech(pcm):
             timer.poke()
 
         await source.capture_frame(
@@ -259,7 +298,7 @@ async def _pump_mic(mic, source, timer: IdleTimer, rtc) -> None:
         )
 
 
-async def _play(stream, timer: IdleTimer, players: list) -> None:
+async def _play(stream, timer: IdleTimer, players: list, far_end: "FarEnd") -> None:
     """LiveKit -> speaker. aplay is started from the first frame's own
     format rather than an assumed one, since TTS and a phone call arrive
     at different rates."""
@@ -273,6 +312,7 @@ async def _play(stream, timer: IdleTimer, players: list) -> None:
                 log.info("Playing %dHz %dch", frame.sample_rate, frame.num_channels)
 
             timer.poke()
+            far_end.heard()
             player.stdin.write(bytes(frame.data))
             player.stdin.flush()
     except Exception as e:
@@ -287,36 +327,99 @@ async def _play(stream, timer: IdleTimer, players: list) -> None:
 
 # ---- the forever loop ---------------------------------------------------
 
-def run_forever() -> None:
-    """Wake word -> conversation -> wake word, for as long as it's on."""
+def wait_for_voice() -> bool:
+    """Block until somebody in the room talks. Returns False if the mic died.
+
+    The no-wake-word path. Cheaper on latency than a wake phrase and much
+    cheaper on LiveKit minutes than staying connected — but it will also
+    fire on the television, which is the trade you are making.
+    """
+    needed = max(1, VOICE_TRIGGER_MS // DEVICE_FRAME_MS)
+    loud = 0
+    mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
+    try:
+        while True:
+            pcm = mic.stdout.read(FRAME_BYTES)
+            if not pcm or len(pcm) < FRAME_BYTES:
+                log.warning("Mic stream ended while waiting for a voice")
+                return False
+
+            if is_speech(pcm, VOICE_TRIGGER_RMS):
+                loud += 1
+                if loud >= needed:
+                    log.info("Heard someone talking")
+                    return True
+            else:
+                # Consecutive, not cumulative: a door closing is one loud
+                # frame, speech is a run of them.
+                loud = 0
+    finally:
+        _stop(mic)
+
+
+def _wait_for_trigger() -> bool:
+    """Whatever starts a conversation in this mode. False = give up."""
+    if WAKE_MODE == "always":
+        return True
+
+    if WAKE_MODE == "voice":
+        return wait_for_voice()
+
     from saathi.wake import build_engine, listen
 
-    engine = build_engine()
-    log.info("Saathi is listening for its wake word")
-    print("Saathi is up. Say the wake word.", flush=True)
+    engine = _wake_engine()
+    # close() explicitly rather than relying on the loop variable going
+    # out of scope: the generator's finally is what kills arecord, and
+    # leaving that to the garbage collector means the old process can
+    # still hold the device when the next one opens it.
+    stream = listen(engine)
+    try:
+        detection = next(stream, None)
+    finally:
+        stream.close()
+
+    if detection is None:
+        return False
+    log.info("Woken by %r", detection.word)
+    engine.reset()
+    return True
+
+
+_ENGINE = None
+
+
+def _wake_engine():
+    """Built once and reused — loading the models per wake would add
+    seconds to every conversation."""
+    global _ENGINE
+    if _ENGINE is None:
+        from saathi.wake import build_engine
+
+        _ENGINE = build_engine()
+    return _ENGINE
+
+
+def run_forever() -> None:
+    """Trigger -> conversation -> trigger, for as long as it's on."""
+    if WAKE_MODE not in ("wake_word", "voice", "always"):
+        raise DeviceError(f"WAKE_MODE must be wake_word, voice or always — got {WAKE_MODE!r}")
+
+    if WAKE_MODE == "wake_word":
+        _wake_engine()  # fail now, loudly, rather than on the first wake
+        log.info("Saathi is listening for its wake word")
+        print("Saathi is up. Say the wake word.", flush=True)
+    elif WAKE_MODE == "voice":
+        log.info("Saathi starts when it hears someone talking")
+        print("Saathi is up. Just talk.", flush=True)
+    else:
+        log.info("Saathi stays connected")
+        print("Saathi is up and connected.", flush=True)
 
     while True:
-        # `listen` owns the mic, so it is torn down before a session
-        # starts and rebuilt afterwards — see the module docstring.
-        #
-        # close() explicitly rather than relying on the loop variable
-        # going out of scope: the generator's finally is what kills
-        # arecord, and leaving that to the garbage collector means the
-        # old process can still hold the device when the next one opens
-        # it, which fails as "Device or resource busy" forever after.
-        stream = listen(engine)
-        try:
-            detection = next(stream, None)
-        finally:
-            stream.close()
-
-        if detection is None:
-            log.warning("Wake listener stopped; retrying in 2s")
+        if not _wait_for_trigger():
+            log.warning("Trigger stopped; retrying in 2s")
             time.sleep(2)
             continue
-
-        log.info("Woken by %r", detection.word)
-        engine.reset()
 
         try:
             asyncio.run(run_session())

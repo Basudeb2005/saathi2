@@ -26,7 +26,9 @@ from livekit.agents import Agent, AgentSession, RunContext, function_tool
 from livekit.plugins import openai, silero
 
 from saathi.config import (
+    AGENT_LANGUAGE,
     DEEPGRAM_STT_MODEL,
+    OPENAI_STT_MODEL,
     ELEVENLABS_VOICE_ID,
     LLM_MODEL,
     OPENAI_TTS_VOICE,
@@ -59,7 +61,7 @@ Use "auto" if you genuinely can't tell.
 - You are talking, not writing. Keep replies to one or two short sentences. No lists, no \
 markdown, no emoji.
 - The person may be elderly. Speak plainly, don't rush, and never use jargon.
-- Reply in whatever language they spoke to you in.
+- Reply in whatever language they spoke to you in — English, Hindi, Bengali, Tamil, or a mix of them in one sentence. Never switch languages on them, and never comment on which language they used.
 - After doing something, say what you did in one short sentence, then stop talking."""
 
 
@@ -161,12 +163,22 @@ class Saathi(Agent):
 
 def _build_stt():
     """Plugins are imported lazily so an unused provider's package never
-    has to be installed — the whole point of starting on one key."""
+    has to be installed — the whole point of starting on one key.
+
+    Language is passed through only when it's pinned. "auto" is right for
+    a household that switches between languages mid-sentence; naming one
+    is more accurate when you know it won't change.
+    """
+    language = None if AGENT_LANGUAGE == "auto" else AGENT_LANGUAGE
+
     if STT_PROVIDER == "deepgram":
         from livekit.plugins import deepgram
 
-        return deepgram.STT(model=DEEPGRAM_STT_MODEL)
-    return openai.STT()
+        # Deepgram wants "multi" rather than a null for code-switching.
+        return deepgram.STT(model=DEEPGRAM_STT_MODEL, language=language or "multi")
+
+    return openai.STT(model=OPENAI_STT_MODEL, language=language) if language \
+        else openai.STT(model=OPENAI_STT_MODEL)
 
 
 def _build_tts():
@@ -192,6 +204,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         room=ctx.room,
         agent=Saathi(contacts=contacts, music=music, room_name=ctx.room.name or SAATHI_ROOM_NAME),
     )
+
+    # Say something immediately. A speaker that answers a wake word with
+    # silence reads as broken, and the person starts talking over the
+    # first reply — which without echo cancellation makes it worse.
+    await session.generate_reply(instructions="Greet them in one short sentence.")
 
 
 if __name__ == "__main__":

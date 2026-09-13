@@ -55,6 +55,9 @@ STT_PROVIDER = os.getenv("STT_PROVIDER", "openai").lower()    # openai | deepgra
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "openai").lower()    # openai | elevenlabs
 
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# gpt-4o-transcribe over whisper-1: markedly better on accented English
+# and on Indian languages, which is most of what this box will hear.
+OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-transcribe")
 DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "shimmer")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
@@ -164,3 +167,33 @@ SPEECH_RMS_THRESHOLD = int(os.getenv("SPEECH_RMS_THRESHOLD", "300"))
 # "plughw:2,0" for a USB speaker. Unset uses the ALSA default — which, as
 # with capture, is routinely not the device you actually plugged in.
 AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE")
+
+# How a conversation starts:
+#   wake_word — say "hey jarvis" first. Cheapest, and immune to the
+#               television. Costs you the delay of the wake phrase.
+#   voice     — any speech starts a session. No delay, but anything in
+#               the room can trigger it, including the TV.
+#   always    — connected from boot. No delay at all, and burns LiveKit
+#               minutes continuously — 1,000/month free is about 33
+#               minutes a day, so this will exhaust it in a fortnight.
+WAKE_MODE = os.getenv("WAKE_MODE", "wake_word").lower()
+
+# For WAKE_MODE=voice: how loud, and for how long, before it counts as
+# someone talking rather than a door closing.
+VOICE_TRIGGER_RMS = int(os.getenv("VOICE_TRIGGER_RMS", "700"))
+VOICE_TRIGGER_MS = int(os.getenv("VOICE_TRIGGER_MS", "300"))
+
+# Half-duplex. The speaker and the mic share a room with no echo
+# cancellation, so an open mic hears the agent's own voice, transcribes
+# it, and replies to itself — which is what "it's talking gibberish"
+# actually is. Muting the mic while the agent speaks breaks that loop.
+# The cost is barge-in: you can't interrupt it mid-sentence.
+HALF_DUPLEX = os.getenv("HALF_DUPLEX", "true").lower() in ("1", "true", "yes")
+# Keep muted this long after the last sound from the far end, to cover
+# the speaker's own decay and the room's reverb tail.
+HALF_DUPLEX_HANGOVER_S = float(os.getenv("HALF_DUPLEX_HANGOVER_S", "0.4"))
+
+# Spoken language. "auto" lets the model follow whatever it hears, which
+# is right for a bilingual household; naming one improves accuracy when
+# you know it won't change.
+AGENT_LANGUAGE = os.getenv("AGENT_LANGUAGE", "auto")

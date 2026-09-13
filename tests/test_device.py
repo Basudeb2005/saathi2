@@ -137,3 +137,41 @@ def test_stop_leaves_an_already_dead_process_alone():
     p = FakeProc(already_dead=True)
     _stop(p)
     assert not p.terminated and not p.killed
+
+
+# ---- half duplex --------------------------------------------------------
+
+def test_far_end_is_silent_before_anything_arrives():
+    from saathi.device import FarEnd
+    assert FarEnd(clock=Clock()).speaking is False
+
+
+def test_far_end_is_speaking_right_after_a_frame():
+    from saathi.device import FarEnd
+    c = Clock()
+    f = FarEnd(hangover_s=0.4, clock=c)
+    f.heard()
+    assert f.speaking is True
+
+
+def test_far_end_goes_quiet_after_the_hangover():
+    """The tail covers the speaker's decay and the room's reverb — end it
+    too early and the mic catches the last syllable of the agent's own
+    reply."""
+    from saathi.device import FarEnd
+    c = Clock()
+    f = FarEnd(hangover_s=0.4, clock=c)
+    f.heard()
+    c.advance(0.5)
+    assert f.speaking is False
+
+
+def test_far_end_stays_speaking_across_a_gap_between_frames():
+    from saathi.device import FarEnd
+    c = Clock()
+    f = FarEnd(hangover_s=0.4, clock=c)
+    f.heard()
+    c.advance(0.2)
+    f.heard()
+    c.advance(0.3)
+    assert f.speaking is True

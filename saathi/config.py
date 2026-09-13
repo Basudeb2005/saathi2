@@ -193,7 +193,10 @@ HALF_DUPLEX = os.getenv("HALF_DUPLEX", "true").lower() in ("1", "true", "yes")
 # the speaker's own decay and the room's reverb tail.
 HALF_DUPLEX_HANGOVER_S = float(os.getenv("HALF_DUPLEX_HANGOVER_S", "0.4"))
 
-# Spoken language. "auto" lets the model follow whatever it hears, which
-# is right for a bilingual household; naming one improves accuracy when
-# you know it won't change.
-AGENT_LANGUAGE = os.getenv("AGENT_LANGUAGE", "auto")
+# Spoken language — PIN THIS. "auto" is a trap on a far-field
+# microphone: given a noisy or quiet signal, Whisper-family models don't
+# return nothing, they return confident nonsense in a language they
+# picked at random. A transcript comes back in Urdu, the model replies in
+# Urdu, and the speaker reads it out. "en" or "hi" costs you nothing and
+# removes the entire failure mode. Set "auto" only with a close mic.
+AGENT_LANGUAGE = os.getenv("AGENT_LANGUAGE", "en")

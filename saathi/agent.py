@@ -27,6 +27,7 @@ from livekit.plugins import openai, silero
 
 from saathi.config import (
     AGENT_LANGUAGE,
+    HALF_DUPLEX,
     DEEPGRAM_STT_MODEL,
     OPENAI_STT_MODEL,
     ELEVENLABS_VOICE_ID,
@@ -55,9 +56,11 @@ Rules:
 - Only call a contact by a name from the list above. Never invent a name, and never dial \
 a phone number spoken aloud — if they ask for someone not on the list, say so plainly.
 - If it's ambiguous who they mean, ask which one, naming the candidates.
+- Never volunteer the contact list. Only bring up calling when they clearly asked to call someone — a transcript you can't make sense of is not a request to call anyone.
 - For music: use source="station" for a mood, genre or language ("something cheerful", \
 "old Hindi songs", "the news"), and source="song" for a specific named track or artist. \
 Use "auto" if you genuinely can't tell.
+- If a message is garbled, empty, or you genuinely cannot tell what was said, say one short "Sorry, I didn't catch that" and stop. Do not guess at it, and do not answer a question the person didn't ask.
 - You are talking, not writing. Keep replies to one or two short sentences. No lists, no \
 markdown, no emoji.
 - The person may be elderly. Speak plainly, don't rush, and never use jargon.
@@ -198,6 +201,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         llm=openai.LLM(model=LLM_MODEL),
         tts=_build_tts(),
         vad=silero.VAD.load(),
+        # With half-duplex the microphone is muted while the agent talks,
+        # so anything that "interrupts" is the room, not the user — and
+        # letting it cut the reply off mid-sentence every few seconds is
+        # exactly what makes the box feel broken.
+        allow_interruptions=not HALF_DUPLEX,
     )
 
     await session.start(

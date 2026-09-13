@@ -58,6 +58,9 @@ saathi/
   calling/
     sip.py           add a SIP participant to the room
     cli.py           guided calling setup: guide / trunk / contacts / test
+  memory/
+    base.py          what a memory backend must do — swap the vendor freely
+    supermemory.py   the first implementation
   wake.py            on-device wake word (openWakeWord or Porcupine)
   device.py          the Pi in its own room: mic in, speaker out
   doctor.py          check all six moving parts before blaming the code
@@ -80,6 +83,42 @@ a few minutes a day. That's what the idle timeout in `device.py` is for.
 Only one process can hold the microphone, so the wake listener is torn
 down for the duration of a session and rebuilt afterwards — serial by
 construction rather than by luck.
+
+### Memory is what separates a companion from a gadget
+
+Without it every conversation starts from nothing, which is fine for a
+speaker and useless for a companion — "how did your grandson's exam go?"
+is the whole difference.
+
+`memory/base.py` defines three methods and nothing else imports a vendor
+SDK, so the backend stays a decision you can revisit: Supermemory today,
+Postgres or a local SQLite file later. That last option matters for a
+device that sits in someone's home and hears private things.
+
+Two rules it holds to:
+
+- **Nothing is stored unless the agent asked for it.** Raw audio and raw
+  transcripts never leave the Pi. The model calls `remember()` for facts
+  worth keeping, and is told not to keep passing chatter.
+- **Failing to remember never fails a conversation.** Every call swallows
+  its errors and degrades to "no memory this turn". A box that goes
+  silent because a memory API returned 503 is a far worse failure than
+  one that forgets.
+
+Recalled facts are shown to the model hedged — "may be out of date" —
+because a stale fact asserted confidently at someone who believes you is
+worse than not knowing.
+
+### Languages
+
+`AGENT_LANGUAGES` is not cosmetic. On a far-field mic, an unconstrained
+model given a noisy signal doesn't return nothing — it returns confident
+nonsense in a language it picked at random, and the reply comes back in
+Urdu. Naming the languages removes the failure mode.
+
+More than one language needs **Deepgram** (`STT_PROVIDER=deepgram`) —
+nova-3's `multi` mode handles code-switching mid-sentence. OpenAI has no
+equivalent, so with several configured it gets the first as a hint.
 
 ### Contacts decide what a call costs
 
@@ -203,7 +242,7 @@ Nothing is one-shot. Every command below is safe to run again:
 ./venv/bin/pytest -q
 ```
 
-112 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
+141 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
 is faked.
 
 ## What is and isn't proven

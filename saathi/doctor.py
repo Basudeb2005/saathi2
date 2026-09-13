@@ -301,6 +301,27 @@ def check_wake_models() -> Result:
     return Result(OK, f"{WAKE_ENGINE} loads")
 
 
+def check_memory() -> Result:
+    from saathi.config import AGENT_LANGUAGES, LANGUAGE_NAMES, MEMORY_BACKEND
+    from saathi.memory import build_memory
+
+    langs = ", ".join(LANGUAGE_NAMES.get(c, c) for c in AGENT_LANGUAGES)
+
+    store = build_memory()
+    if store.name == "none":
+        if MEMORY_BACKEND not in ("none", "", "null"):
+            return Result(
+                FAIL, f"{MEMORY_BACKEND} configured but wouldn't start",
+                "python -m saathi.setup --only memory",
+            )
+        return Result(WARN, f"off — speaks {langs}", "optional: python -m saathi.setup --only memory")
+
+    # A real round trip. A key that's present but rejected otherwise only
+    # shows up as an assistant that quietly never remembers anything.
+    facts = store.recall("test", limit=1)
+    return Result(OK, f"{store.name} reachable ({len(facts)} hit) — speaks {langs}")
+
+
 def check_calling() -> Result:
     from saathi.config import LIVEKIT_PSTN_TRUNK_ID, LIVEKIT_SIP_TRUNK_ID
 
@@ -325,6 +346,7 @@ CHECKS: List[Check] = [
     Check("Mopidy", check_mopidy),
     Check("Radio Browser", check_radio),
     Check("Wake word", check_wake_models),
+    Check("Memory & language", check_memory, optional=True),
     Check("Calling", check_calling, optional=True),
 ]
 

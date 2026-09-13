@@ -123,6 +123,36 @@ SECTIONS: List[Section] = [
         ],
     ),
     Section(
+        title="Languages",
+        blurb="Which languages this household speaks. Naming them is what stops it answering English with Russian.",
+        optional=True,
+        fields=[
+            Field(
+                "AGENT_LANGUAGES", "language codes, comma separated",
+                help="en=English hi=Hindi zh=Chinese ta=Tamil ms=Malay bn=Bengali. Default: en,hi",
+                secret=False,
+            ),
+        ],
+    ),
+    Section(
+        title="Memory",
+        blurb="What it remembers between conversations — names, family, what they like. Off by default.",
+        optional=True,
+        implies={"MEMORY_BACKEND": "supermemory"},
+        fields=[
+            Field(
+                "SUPERMEMORY_API_KEY", "Supermemory API key",
+                help="supermemory.ai — starts with sm_",
+                validate=require_prefix("sm_", "a Supermemory key"),
+            ),
+            Field(
+                "MEMORY_CONTAINER_TAG", "name for this household's memories",
+                help="keeps one box's memories separate from another's. Default: saathi-home",
+                secret=False,
+            ),
+        ],
+    ),
+    Section(
         title="Deepgram",
         blurb="Faster, more accurate speech-to-text than OpenAI's. Add it if transcription annoys you.",
         optional=True,

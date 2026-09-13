@@ -27,6 +27,9 @@ from livekit.plugins import openai, silero
 
 from saathi.config import (
     AGENT_LANGUAGE,
+    AGENT_LANGUAGES,
+    LANGUAGE_NAMES,
+    MEMORY_RECALL_LIMIT,
     HALF_DUPLEX,
     DEEPGRAM_STT_MODEL,
     OPENAI_STT_MODEL,
@@ -40,6 +43,7 @@ from saathi.config import (
 from saathi.contacts import ContactNotFoundError, ContactsRegistry
 from saathi.calling.sip import CallError, hang_up, place_call
 from saathi.logging_setup import get_logger
+from saathi.memory import MemoryStore, build_memory
 from saathi.music.player import MusicError, MusicPlayer
 
 log = get_logger("agent")
@@ -51,6 +55,10 @@ You can do three things: talk with the person, play music, and call their family
 
 Known contacts you can call:
 {contacts}
+
+{memory}
+
+Languages this household speaks: {languages}
 
 Rules:
 - Only call a contact by a name from the list above. Never invent a name, and never dial \
@@ -69,8 +77,25 @@ markdown, no emoji.
 
 
 class Saathi(Agent):
-    def __init__(self, contacts: ContactsRegistry, music: MusicPlayer, room_name: str):
-        super().__init__(instructions=INSTRUCTIONS.format(contacts=contacts.describe_for_prompt()))
+    def __init__(
+        self,
+        contacts: ContactsRegistry,
+        music: MusicPlayer,
+        room_name: str,
+        memory: Optional[MemoryStore] = None,
+    ):
+        self.memory = memory or build_memory()
+
+        languages = ", ".join(LANGUAGE_NAMES.get(c, c) for c in AGENT_LANGUAGES)
+        # Fetched once, at construction: a network round trip before every
+        # reply would show up as latency on every single turn.
+        remembered = self.memory.describe_for_prompt(self.memory.profile())
+
+        super().__init__(instructions=INSTRUCTIONS.format(
+            contacts=contacts.describe_for_prompt(),
+            memory=remembered or "(you haven't met this person before)",
+            languages=languages,
+        ))
         self.contacts = contacts
         self.music = music
         self.room_name = room_name
@@ -130,6 +155,29 @@ class Saathi(Agent):
         except MusicError as e:
             return str(e)
 
+    # ---- memory --------------------------------------------------------
+
+    @function_tool()
+    async def remember(self, context: RunContext, fact: str) -> str:
+        """Save something lasting about this person — a name, a relationship, a
+        preference, something coming up in their life. Write it as a short complete
+        sentence that will still make sense months from now, e.g. "Her grandson Arun
+        is sitting his exams in March"."""
+        ok = self.memory.remember(fact, kind="fact")
+        # Deliberately bland either way. The person didn't ask for a filing
+        # system, and "I've made a note" mid-conversation is jarring.
+        return "Noted." if ok else "Noted."
+
+    @function_tool()
+    async def recall(self, context: RunContext, query: str) -> str:
+        """Look up what you know about this person, for when they refer to something
+        from an earlier conversation. `query` is what you're trying to remember,
+        e.g. "her grandson" or "what she likes listening to"."""
+        facts = self.memory.recall(query, limit=MEMORY_RECALL_LIMIT)
+        if not facts:
+            return "Nothing remembered about that."
+        return "\n".join(f"- {f.text}" for f in facts)
+
     # ---- calling -------------------------------------------------------
 
     @function_tool()
@@ -172,16 +220,25 @@ def _build_stt():
     a household that switches between languages mid-sentence; naming one
     is more accurate when you know it won't change.
     """
-    language = None if AGENT_LANGUAGE == "auto" else AGENT_LANGUAGE
+    # One language pinned is the most accurate and the most robust against
+    # the hallucinated-language failure. Several means code-switching, and
+    # only Deepgram does that properly — OpenAI has no multi mode, so it
+    # gets the first language as a hint rather than nothing at all, which
+    # is what let it answer English with Russian.
+    multilingual = len(AGENT_LANGUAGES) > 1
 
     if STT_PROVIDER == "deepgram":
         from livekit.plugins import deepgram
 
-        # Deepgram wants "multi" rather than a null for code-switching.
-        return deepgram.STT(model=DEEPGRAM_STT_MODEL, language=language or "multi")
+        return deepgram.STT(
+            model=DEEPGRAM_STT_MODEL,
+            language="multi" if multilingual else AGENT_LANGUAGES[0],
+        )
 
-    return openai.STT(model=OPENAI_STT_MODEL, language=language) if language \
-        else openai.STT(model=OPENAI_STT_MODEL)
+    primary = AGENT_LANGUAGES[0] if AGENT_LANGUAGES else AGENT_LANGUAGE
+    if primary == "auto":
+        return openai.STT(model=OPENAI_STT_MODEL)
+    return openai.STT(model=OPENAI_STT_MODEL, language=primary)
 
 
 def _build_tts():
@@ -195,6 +252,8 @@ def _build_tts():
 async def entrypoint(ctx: agents.JobContext) -> None:
     contacts = ContactsRegistry()
     music = MusicPlayer()
+    memory = build_memory()
+    log.info("Memory backend: %s", memory.name)
 
     session = AgentSession(
         stt=_build_stt(),
@@ -210,7 +269,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     await session.start(
         room=ctx.room,
-        agent=Saathi(contacts=contacts, music=music, room_name=ctx.room.name or SAATHI_ROOM_NAME),
+        agent=Saathi(
+            contacts=contacts,
+            music=music,
+            room_name=ctx.room.name or SAATHI_ROOM_NAME,
+            memory=memory,
+        ),
     )
 
     # Say something immediately. A speaker that answers a wake word with

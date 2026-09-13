@@ -200,3 +200,37 @@ HALF_DUPLEX_HANGOVER_S = float(os.getenv("HALF_DUPLEX_HANGOVER_S", "0.4"))
 # Urdu, and the speaker reads it out. "en" or "hi" costs you nothing and
 # removes the entire failure mode. Set "auto" only with a close mic.
 AGENT_LANGUAGE = os.getenv("AGENT_LANGUAGE", "en")
+
+# The languages this household actually speaks. Naming them is what stops
+# the hallucination: an unconstrained model given a noisy signal invents
+# a language, but one told to expect these will not answer English with
+# Russian. Order matters only for the prompt's phrasing.
+AGENT_LANGUAGES = [
+    lang.strip() for lang in os.getenv("AGENT_LANGUAGES", "en,hi").split(",") if lang.strip()
+]
+
+# Human names, for the system prompt. A model reads "Tamil" more reliably
+# than "ta", and this is also the list the doctor prints back at you.
+LANGUAGE_NAMES = {
+    "en": "English", "hi": "Hindi", "zh": "Chinese (Mandarin)",
+    "ta": "Tamil", "ms": "Malay", "bn": "Bengali", "te": "Telugu",
+    "mr": "Marathi", "es": "Spanish", "fr": "French", "de": "German",
+}
+
+# ---- Memory ------------------------------------------------------------
+# What Saathi remembers between conversations. Without this every wake is
+# a blank slate, which is fine for a speaker and useless for a companion:
+# "how did your grandson's exam go?" is the whole difference.
+#
+# MEMORY_BACKEND: "supermemory" | "none"
+MEMORY_BACKEND = os.getenv("MEMORY_BACKEND", "none").lower()
+SUPERMEMORY_API_KEY = os.getenv("SUPERMEMORY_API_KEY")
+SUPERMEMORY_BASE_URL = os.getenv("SUPERMEMORY_BASE_URL", "https://api.supermemory.ai")
+# Scopes every memory to this household. One box, one tag — so a second
+# device, or a shared account, never reads back somebody else's life.
+MEMORY_CONTAINER_TAG = os.getenv("MEMORY_CONTAINER_TAG", "saathi-home")
+# How many recalled facts to put in front of the model. More context is
+# not better here: a long wall of half-relevant facts crowds out the
+# actual question and slows every turn.
+MEMORY_RECALL_LIMIT = int(os.getenv("MEMORY_RECALL_LIMIT", "6"))
+MEMORY_TIMEOUT_S = float(os.getenv("MEMORY_TIMEOUT_S", "8"))

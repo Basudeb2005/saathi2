@@ -135,6 +135,27 @@ WAKE_REFRACTORY_S = float(os.getenv("WAKE_REFRACTORY_S", "2.0"))
 # move across reboots and replugs.
 WAKE_CAPTURE_DEVICE = os.getenv("WAKE_CAPTURE_DEVICE")
 
+# Duck the music the moment anyone starts talking, before knowing whether
+# it was the wake word. Without echo cancellation the wake model is
+# listening to a speaker playing music into the microphone and misses
+# almost everything; a brief dip gives it a clean window. Costs a
+# half-second dip whenever someone speaks near the box, which is a much
+# smaller annoyance than a wake word that doesn't work during music.
+WAKE_DUCK_ON_SPEECH = os.getenv("WAKE_DUCK_ON_SPEECH", "true").lower() in ("1", "true", "yes")
+WAKE_DUCK_VOLUME = int(os.getenv("WAKE_DUCK_VOLUME", "25"))
+WAKE_DUCK_HOLD_S = float(os.getenv("WAKE_DUCK_HOLD_S", "2.5"))
+# RMS above which to bother ducking. Higher than SPEECH_RMS_THRESHOLD
+# because the music itself is already in this signal.
+WAKE_DUCK_RMS = int(os.getenv("WAKE_DUCK_RMS", "1200"))
+
+# Speaker verification. A verifier model trained on one person's voice
+# makes the wake word fire for them and not for the television — which
+# is the other half of working while music plays. Train one with:
+#   python -m saathi.wake enroll
+WAKE_VERIFIER_PATH = os.getenv("WAKE_VERIFIER_PATH", str(ROOT_DIR / "wake_models" / "verifier.joblib"))
+# 0-1. Higher means stricter about it being that person.
+WAKE_VERIFIER_THRESHOLD = float(os.getenv("WAKE_VERIFIER_THRESHOLD", "0.1"))
+
 # --- openwakeword -------------------------------------------------------
 # Ships pretrained: alexa, hey mycroft, hey jarvis, hey rhasspy, plus two
 # phrase models. openwakeword.utils.download_models() fetches them on
@@ -183,7 +204,11 @@ SPEECH_RMS_THRESHOLD = int(os.getenv("SPEECH_RMS_THRESHOLD", "300"))
 # with a speaker playing music into the microphone — which, with no echo
 # cancellation, it loses. The cost is LiveKit minutes for as long as the
 # music runs, so a long album will spend the free tier.
-MUSIC_HOLDS_SESSION = os.getenv("MUSIC_HOLDS_SESSION", "true").lower() in ("1", "true", "yes")
+# Off by default: a session held open for the length of an album spends
+# the free LiveKit tier, and an always-listening box is a different
+# product from one you wake deliberately. The wake word stays the way in;
+# WAKE_DUCK_ON_SPEECH is what gives it a chance over music.
+MUSIC_HOLDS_SESSION = os.getenv("MUSIC_HOLDS_SESSION", "false").lower() in ("1", "true", "yes")
 # How often to ask Mopidy whether it's still playing. Every frame would
 # be 50 RPC calls a second for something that changes every few minutes.
 MUSIC_CHECK_INTERVAL_S = float(os.getenv("MUSIC_CHECK_INTERVAL_S", "4"))

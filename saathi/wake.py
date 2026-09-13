@@ -22,6 +22,9 @@ engine reports and `listen()` reads from.
 """
 from __future__ import annotations
 
+import audioop
+import os
+import pathlib
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -31,6 +34,12 @@ import numpy as np
 
 from saathi.config import (
     OWW_THRESHOLD,
+    WAKE_DUCK_HOLD_S,
+    WAKE_DUCK_ON_SPEECH,
+    WAKE_DUCK_RMS,
+    WAKE_DUCK_VOLUME,
+    WAKE_VERIFIER_PATH,
+    WAKE_VERIFIER_THRESHOLD,
     OWW_WORDS,
     PORCUPINE_ACCESS_KEY,
     PORCUPINE_KEYWORD_PATHS,
@@ -164,8 +173,22 @@ class OpenWakeWordEngine:
         except Exception as e:
             log.warning("Couldn't download wake models (%s) — trying what's on disk", e)
 
+        # A verifier trained on one person's voice is what makes the wake
+        # word fire for them and not for the television — the other half
+        # of working while music is playing. Optional: without one the
+        # model is speaker-independent, which is fine in a quiet room.
+        extra = {}
+        if os.path.exists(WAKE_VERIFIER_PATH):
+            extra = {
+                "custom_verifier_models": {w: WAKE_VERIFIER_PATH for w in self.words},
+                "custom_verifier_threshold": WAKE_VERIFIER_THRESHOLD,
+            }
+            log.info("Using voice verifier %s", WAKE_VERIFIER_PATH)
+
         try:
-            self.model = Model(wakeword_models=list(self.words), inference_framework="onnx")
+            self.model = Model(
+                wakeword_models=list(self.words), inference_framework="onnx", **extra
+            )
         except Exception as e:
             raise WakeWordError(
                 f"Couldn't load wake models {self.words}. Pretrained names are: "
@@ -289,6 +312,60 @@ def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
         raise WakeWordError("arecord not found — install alsa-utils") from e
 
 
+class _MusicDucker:
+    """Dips the music the moment anyone speaks, before we know what they
+    said.
+
+    Without echo cancellation the wake model is listening to a speaker
+    playing music into the microphone, and misses almost everything. A
+    brief dip gives it a clean window. The cost is a half-second dip
+    whenever someone talks near the box — a far smaller annoyance than a
+    wake word that simply doesn't work while music is on.
+    """
+
+    def __init__(self):
+        self._ducked_until = 0.0
+        self._previous: Optional[int] = None
+
+    def consider(self, pcm: bytes) -> None:
+        if not WAKE_DUCK_ON_SPEECH:
+            return
+
+        now = time.monotonic()
+        loud = audioop.rms(pcm, 2) > WAKE_DUCK_RMS
+
+        if loud:
+            if self._previous is None:
+                self._duck()
+            self._ducked_until = now + WAKE_DUCK_HOLD_S
+        elif self._previous is not None and now >= self._ducked_until:
+            self.restore()
+
+    def _duck(self) -> None:
+        try:
+            from saathi.music.mopidy import MopidyClient
+
+            client = MopidyClient()
+            if client.state() != "playing":
+                return
+            self._previous = client.get_volume()
+            client.set_volume(WAKE_DUCK_VOLUME)
+        except Exception:
+            # Never let a volume call cost us a wake word.
+            self._previous = None
+
+    def restore(self) -> None:
+        if self._previous is None:
+            return
+        try:
+            from saathi.music.mopidy import MopidyClient
+
+            MopidyClient().set_volume(self._previous)
+        except Exception:
+            pass
+        self._previous = None
+
+
 def listen(engine=None, device: Optional[str] = None) -> Iterator[Detection]:
     """Yield a Detection every time someone says the wake word.
 
@@ -299,6 +376,7 @@ def listen(engine=None, device: Optional[str] = None) -> Iterator[Detection]:
     engine = engine or build_engine()
     frame_bytes = engine.frame_samples * 2
     proc = _spawn_arecord(device if device is not None else WAKE_CAPTURE_DEVICE)
+    ducker = _MusicDucker()
 
     try:
         while True:
@@ -307,17 +385,121 @@ def listen(engine=None, device: Optional[str] = None) -> Iterator[Detection]:
                 log.warning("Mic stream ended")
                 return
 
+            ducker.consider(chunk)
+
             detection = engine.process(np.frombuffer(chunk, dtype=np.int16))
             if detection:
                 yield detection
     finally:
+        ducker.restore()
         _stop(proc)
 
 
+def _record_clip(path: str, seconds: float, device: Optional[str]) -> bool:
+    """One 16kHz mono WAV, which is what the trainer expects."""
+    cmd = [
+        "arecord", "-q", "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1",
+        "-d", str(seconds), path,
+    ]
+    if device:
+        cmd += ["-D", device]
+    try:
+        return subprocess.run(cmd, timeout=seconds + 10).returncode == 0
+    except Exception as e:
+        log.error("Recording failed: %s", e)
+        return False
+
+
+def enroll(
+    positives: int = 8,
+    negatives: int = 8,
+    seconds: float = 2.0,
+    device: Optional[str] = None,
+) -> int:
+    """Train a verifier on one person's voice.
+
+    Two things this buys, and they're the same mechanism: the wake word
+    stops firing for the television, and it keeps working when the room
+    is noisy — because "is this the wake word" becomes "is this the wake
+    word, from the person who lives here".
+
+    The negatives matter as much as the positives. Without examples of
+    the same voice saying other things, the model learns "this person"
+    rather than "this person saying this phrase", and then fires on any
+    sentence they utter.
+    """
+    import tempfile
+
+    word = OWW_WORDS[0]
+    spoken = word.replace("_", " ")
+    device = device if device is not None else WAKE_CAPTURE_DEVICE
+
+    print(f"\nTeaching Saathi your voice — about two minutes.\n")
+    print(f"  It will record {positives} clips of you saying {spoken!r},")
+    print(f"  then {negatives} clips of you saying anything else.\n")
+    print("  Sit where you normally would, and speak normally.")
+    input("  Press Enter when you're ready. ")
+
+    workdir = pathlib.Path(tempfile.mkdtemp(prefix="saathi-enroll-"))
+    pos_dir, neg_dir = workdir / "positive", workdir / "negative"
+    pos_dir.mkdir()
+    neg_dir.mkdir()
+
+    for i in range(positives):
+        input(f"\n  [{i + 1}/{positives}] Press Enter, then say {spoken!r}: ")
+        if not _record_clip(str(pos_dir / f"{i}.wav"), seconds, device):
+            print("  recording failed — is the mic device right?")
+            return 1
+
+    print(f"\n  Now {negatives} clips of ordinary talking — anything at all,")
+    print(f"  just NOT {spoken!r}. Count to five, read something out.")
+    for i in range(negatives):
+        input(f"\n  [{i + 1}/{negatives}] Press Enter, then talk: ")
+        if not _record_clip(str(neg_dir / f"{i}.wav"), seconds, device):
+            print("  recording failed")
+            return 1
+
+    print("\n  Training… (a minute or so on a Pi)")
+    try:
+        import openwakeword
+
+        pathlib.Path(WAKE_VERIFIER_PATH).parent.mkdir(parents=True, exist_ok=True)
+        openwakeword.train_custom_verifier(
+            positive_reference_clips=str(pos_dir),
+            negative_reference_clips=str(neg_dir),
+            output_path=WAKE_VERIFIER_PATH,
+            model_name=word,
+        )
+    except Exception as e:
+        print(f"  training failed: {e}")
+        return 1
+
+    print(f"\n  Done — saved to {WAKE_VERIFIER_PATH}")
+    print("  It's picked up automatically on the next start.")
+    print(f"  Too strict? Lower WAKE_VERIFIER_THRESHOLD (now {WAKE_VERIFIER_THRESHOLD}).")
+    print(f"  Fires for other people? Raise it.\n")
+    return 0
+
+
 def main() -> None:
-    """`python -m saathi.wake` — print detections. The fastest way to find
-    out whether a wake word actually works in the real room, at the real
-    distance, with the television on."""
+    """`python -m saathi.wake` — print detections, so you can find out
+    whether the wake word works in the real room, at the real distance,
+    with the television on.
+
+    `python -m saathi.wake enroll` trains it on one person's voice."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m saathi.wake")
+    sub = parser.add_subparsers(dest="command")
+    e = sub.add_parser("enroll", help="teach it one person's voice")
+    e.add_argument("--positives", type=int, default=8)
+    e.add_argument("--negatives", type=int, default=8)
+    e.add_argument("--seconds", type=float, default=2.0)
+    args = parser.parse_args()
+
+    if args.command == "enroll":
+        raise SystemExit(enroll(args.positives, args.negatives, args.seconds))
+
     try:
         engine = build_engine()
     except WakeWordError as e:

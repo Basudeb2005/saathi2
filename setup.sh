@@ -11,6 +11,15 @@ set -euo pipefail
 REPO_URL="${SAATHI_REPO:-https://github.com/Basudeb2005/saathi2.git}"
 DIR="${SAATHI_DIR:-$HOME/saathi2}"
 
+# set -e exits silently on the first failure, which on a long install
+# leaves the last screenful of apt output on screen and no indication
+# that anything went wrong or what to do next.
+trap 'code=$?; [ $code -ne 0 ] && {
+  printf "\n\033[31m✗ setup failed (exit %s)\033[0m\n" "$code"
+  printf "  Re-running is safe — finished steps are skipped:\n"
+  printf "    cd %s && git pull && bash setup.sh\n\n" "${DIR:-~/saathi2}"
+}' EXIT
+
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 dim()  { printf '\033[2m%s\033[0m\n' "$1"; }
 ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; }

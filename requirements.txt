@@ -1,9 +1,14 @@
-# Agent runtime
+# Agent runtime.
 # openai+silero is all you need to start; add the others only if you
 # switch STT_PROVIDER/TTS_PROVIDER.
 livekit-agents[openai,silero]~=1.0
 # livekit-agents[deepgram,elevenlabs]
-livekit-api~=0.8
+
+# Imported directly by saathi/device.py (rtc) and saathi/calling/sip.py
+# (api). Deliberately unpinned: livekit-agents pins these itself, and
+# pinning them here again is how you get ResolutionImpossible.
+livekit
+livekit-api
 
 # Wake word (runs on-device). openwakeword is the default and needs
 # no account; pvporcupine is only needed for WAKE_ENGINE=porcupine.

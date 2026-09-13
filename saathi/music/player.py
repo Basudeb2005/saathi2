@@ -23,7 +23,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Optional
 
-from saathi.config import MUSIC_DUCK_VOLUME, MUSIC_NORMAL_VOLUME, MUSIC_SONG_RESULTS
+from saathi.config import (
+    MUSIC_DUCK_VOLUME,
+    MUSIC_NORMAL_VOLUME,
+    MUSIC_SONG_RESULTS,
+    MUSIC_STOP_AFTER_SONG,
+)
 from saathi.logging_setup import get_logger
 from saathi.music.mopidy import MopidyClient, MopidyError
 from saathi.music.radio import RadioBrowser, RadioError
@@ -73,6 +78,9 @@ class MusicPlayer:
             raise MusicError(f"I couldn't find a song called {query}.")
 
         try:
+            # Set before playing: after, the track has already begun and
+            # Mopidy may have decided what follows it.
+            self.mopidy.set_single(MUSIC_STOP_AFTER_SONG)
             self.mopidy.play_uris(uris)
         except MopidyError as e:
             raise MusicError(str(e)) from e
@@ -93,6 +101,10 @@ class MusicPlayer:
             raise MusicError(f"I couldn't find any station for {query}.")
 
         try:
+            # A station is one endless stream — single mode would be
+            # meaningless, and leaving it set from a previous song would
+            # be confusing.
+            self.mopidy.set_single(False)
             self.mopidy.play_uris([station.url])
         except MopidyError as e:
             raise MusicError(str(e)) from e

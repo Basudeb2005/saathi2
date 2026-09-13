@@ -100,3 +100,25 @@ def test_ducking_never_breaks_the_turn_when_mopidy_is_down():
     with player(Broken()).ducked():
         ran = True
     assert ran
+
+
+def test_a_song_stops_instead_of_rolling_into_the_next_result():
+    """"Play Lag Ja Gale" asks for one song. Wandering into whatever
+    YouTube ranked fourth isn't that, and someone who can't easily say
+    "stop" is then stuck with it."""
+    mopidy = FakeMopidy(search_results=["youtube:video/a", "youtube:video/b"])
+    player(mopidy).play("lag ja gale", source="song")
+    assert mopidy.single is True
+
+
+def test_a_station_does_not_get_single_mode():
+    mopidy = FakeMopidy()
+    radio = FakeRadio(station=Station(name="Jazz FM", url="http://jazz"))
+    player(mopidy, radio).play("jazz", source="station")
+    assert mopidy.single is False
+
+
+def test_the_other_results_stay_queued_for_next():
+    mopidy = FakeMopidy(search_results=["youtube:video/a", "youtube:video/b"])
+    player(mopidy).play("lag ja gale", source="song")
+    assert mopidy.played == [["youtube:video/a", "youtube:video/b"]]

@@ -92,6 +92,12 @@ MOPIDY_SEARCH_TIMEOUT_S = float(os.getenv("MOPIDY_SEARCH_TIMEOUT_S", "75"))
 # twenty costs roughly four times the wait for a first track that is
 # almost always the right one anyway.
 MUSIC_SONG_RESULTS = int(os.getenv("MUSIC_SONG_RESULTS", "5"))
+# Stop after the requested song rather than rolling into the next search
+# result. "Play Lag Ja Gale" is a request for one song; wandering into
+# whatever YouTube ranked fourth is not what was asked for, and someone
+# who can't easily say "stop" is then stuck with it. The rest of the
+# results stay queued, so "next" still works when they want it.
+MUSIC_STOP_AFTER_SONG = os.getenv("MUSIC_STOP_AFTER_SONG", "true").lower() in ("1", "true", "yes")
 
 # Volume the music ducks to while Saathi is speaking or on a call, as a
 # percentage of normal. Music and voice share one speaker; without this

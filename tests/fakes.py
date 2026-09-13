@@ -68,6 +68,7 @@ class FakeMopidy:
         self.volumes: List[int] = []
         self.actions: List[str] = []
         self.volume: Optional[int] = 70
+        self.single: Optional[bool] = None
 
     def search_tracks(self, query, uri_scheme=None, limit=20):
         self.actions.append(f"search:{query}")
@@ -78,6 +79,9 @@ class FakeMopidy:
 
     def current_track_name(self):
         return self.track_name
+
+    def set_single(self, single):
+        self.single = single
 
     def pause(self): self.actions.append("pause")
     def resume(self): self.actions.append("resume")

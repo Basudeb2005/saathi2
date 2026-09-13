@@ -86,6 +86,14 @@ class MopidyClient:
         self._call("core.playback.play")
         log.info("Playing %d uri(s), first=%s", len(uris), uris[0])
 
+    def set_single(self, single: bool) -> None:
+        """Stop after the current track instead of advancing.
+
+        The queue is untouched, so an explicit "next" still moves on —
+        this only changes what happens when a track simply ends.
+        """
+        self._call("core.tracklist.set_single", value=bool(single))
+
     def pause(self) -> None:
         self._call("core.playback.pause")
 

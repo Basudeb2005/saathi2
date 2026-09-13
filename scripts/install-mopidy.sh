@@ -108,10 +108,14 @@ StartLimitIntervalSec=0
 WantedBy=default.target
 UNIT
 
-systemctl --user daemon-reload
-systemctl --user enable --now mopidy
-# Survive logout, so the speaker keeps working when nobody is SSH'd in.
+# Linger FIRST. Without it there may be no user systemd manager at all
+# over SSH, and `systemctl --user enable --now` then reports success
+# while starting nothing — which is why the journal came back empty.
 sudo loginctl enable-linger "$USER" >/dev/null 2>&1 || warn "couldn't enable linger"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+systemctl --user daemon-reload 2>/dev/null || warn "no user systemd manager"
+systemctl --user enable --now mopidy 2>/dev/null || warn "couldn't start the user service"
 
 for _ in $(seq 1 20); do
   curl -fsS -m 1 -X POST http://127.0.0.1:6680/mopidy/rpc \
@@ -131,8 +135,15 @@ if [ -n "$VERSION_JSON" ]; then
     *) warn "an OLD Mopidy is still serving port 6680 — the new one never bound" ;;
   esac
 else
-  warn "not responding. Its own log says why:"
+  warn "not responding. Its own log:"
   journalctl --user -u mopidy -n 30 --no-pager 2>/dev/null | sed 's/^/    /' || true
+
+  # An empty journal means the service never ran, not that it ran
+  # quietly — so run it in the foreground where the error has nowhere to
+  # hide. Ten seconds is plenty to fail at startup.
+  echo
+  warn "running it directly instead, to see the real error:"
+  timeout 10 "$VENV/bin/mopidy" 2>&1 | tail -25 | sed 's/^/    /' || true
 fi
 
 echo

@@ -236,17 +236,18 @@ def check_livekit() -> Result:
 
 
 def check_wake_models() -> Result:
-    try:
-        import openwakeword  # noqa: F401
-    except ImportError:
-        return Result(FAIL, "openwakeword not installed", "./venv/bin/pip install -r requirements.txt")
+    from saathi.config import WAKE_ENGINE
+
     try:
         from saathi.wake import build_engine
 
         build_engine()
     except Exception as e:
-        return Result(FAIL, str(e)[:120], "first run downloads the models — check internet")
-    return Result(OK, "wake engine loads")
+        # The engine's own message already names the fix (install this,
+        # or switch to the free one), so don't paper over it with a
+        # generic "check internet".
+        return Result(FAIL, f"[{WAKE_ENGINE}] {str(e)[:140]}")
+    return Result(OK, f"{WAKE_ENGINE} loads")
 
 
 def check_calling() -> Result:

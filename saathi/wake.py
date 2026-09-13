@@ -194,7 +194,11 @@ class PorcupineEngine:
         try:
             import pvporcupine
         except ImportError as e:
-            raise WakeWordError("pvporcupine isn't installed — pip install pvporcupine") from e
+            raise WakeWordError(
+                "WAKE_ENGINE=porcupine but pvporcupine isn't installed. Either "
+                "`pip install pvporcupine`, or set WAKE_ENGINE=openwakeword in .env "
+                "— that one is pretrained, needs no account, and is the default."
+            ) from e
 
         if PORCUPINE_KEYWORD_PATHS:
             kwargs = {"keyword_paths": PORCUPINE_KEYWORD_PATHS}

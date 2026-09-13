@@ -20,10 +20,13 @@ file for an elderly user: silence reads as "it's broken".
 """
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
-from typing import Optional
+from typing import Dict, List, Optional
 
 from saathi.config import (
+    MUSIC_CACHE_PATH,
+    MUSIC_CACHE_SIZE,
     MUSIC_DUCK_VOLUME,
     MUSIC_NORMAL_VOLUME,
     MUSIC_SONG_RESULTS,
@@ -38,14 +41,72 @@ log = get_logger("music.player")
 SOURCES = ("auto", "song", "station")
 
 
+class SongCache:
+    """query -> track URIs, kept on disk.
+
+    A first YouTube lookup costs ten to twenty seconds on a Pi; the
+    second time it should be instant. Caching is safe here because a
+    youtube:video/<id> URI is an identifier, not a signed stream URL —
+    Mopidy resolves it afresh at play time, so a cached entry cannot go
+    stale in the way a cached URL would.
+
+    Every failure is swallowed: a cache that can't be read or written is
+    a slower lookup, never a failed one.
+    """
+
+    def __init__(self, path=MUSIC_CACHE_PATH, size: int = MUSIC_CACHE_SIZE):
+        self.path = path
+        self.size = size
+        self._data: Dict[str, List[str]] = {}
+        self._load()
+
+    @staticmethod
+    def _key(query: str) -> str:
+        return " ".join(query.lower().split())
+
+    def _load(self) -> None:
+        try:
+            if self.path.exists():
+                loaded = json.loads(self.path.read_text())
+                if isinstance(loaded, dict):
+                    self._data = {k: v for k, v in loaded.items() if isinstance(v, list)}
+        except Exception as e:
+            log.info("Couldn't read the song cache (%s) — starting empty", e)
+            self._data = {}
+
+    def get(self, query: str) -> Optional[List[str]]:
+        return self._data.get(self._key(query))
+
+    def put(self, query: str, uris: List[str]) -> None:
+        if not uris:
+            return
+        self._data[self._key(query)] = uris
+
+        # Oldest-first eviction: dicts keep insertion order, and the
+        # thing worth keeping is what was played recently.
+        while len(self._data) > self.size:
+            self._data.pop(next(iter(self._data)))
+
+        try:
+            self.path.write_text(json.dumps(self._data, indent=0))
+        except Exception as e:
+            log.info("Couldn't write the song cache: %s", e)
+
+
 class MusicError(Exception):
     """Nothing could be played. The message is written to be spoken."""
 
 
 class MusicPlayer:
-    def __init__(self, mopidy: Optional[MopidyClient] = None, radio: Optional[RadioBrowser] = None):
+    def __init__(
+        self,
+        mopidy: Optional[MopidyClient] = None,
+        radio: Optional[RadioBrowser] = None,
+        cache: Optional[SongCache] = None,
+    ):
         self.mopidy = mopidy or MopidyClient()
         self.radio = radio or RadioBrowser()
+        self.cache = cache if cache is not None else SongCache()
 
     # ---- playing -------------------------------------------------------
 
@@ -67,15 +128,21 @@ class MusicPlayer:
             return self._play_station(query)
 
     def _play_song(self, query: str) -> str:
-        try:
-            uris = self.mopidy.search_tracks(
-                query, uri_scheme="youtube", limit=MUSIC_SONG_RESULTS
-            )
-        except MopidyError as e:
-            raise MusicError(str(e)) from e
+        cached = self.cache.get(query)
+        if cached:
+            log.info("Song cache hit for %r", query)
+            uris = cached
+        else:
+            try:
+                uris = self.mopidy.search_tracks(
+                    query, uri_scheme="youtube", limit=MUSIC_SONG_RESULTS
+                )
+            except MopidyError as e:
+                raise MusicError(str(e)) from e
 
-        if not uris:
-            raise MusicError(f"I couldn't find a song called {query}.")
+            if not uris:
+                raise MusicError(f"I couldn't find a song called {query}.")
+            self.cache.put(query, uris)
 
         try:
             # Set before playing: after, the track has already begun and

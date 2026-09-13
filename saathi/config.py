@@ -99,6 +99,13 @@ MUSIC_SONG_RESULTS = int(os.getenv("MUSIC_SONG_RESULTS", "5"))
 # results stay queued, so "next" still works when they want it.
 MUSIC_STOP_AFTER_SONG = os.getenv("MUSIC_STOP_AFTER_SONG", "true").lower() in ("1", "true", "yes")
 
+# Remember what each request resolved to. Safe to cache because a
+# youtube:video/<id> URI is stable — Mopidy resolves it to a stream at
+# play time, so nothing here goes stale. Worth it because people replay
+# the same handful of songs, and the second time should be instant.
+MUSIC_CACHE_PATH = Path(os.getenv("MUSIC_CACHE_PATH", ROOT_DIR / "song_cache.json"))
+MUSIC_CACHE_SIZE = int(os.getenv("MUSIC_CACHE_SIZE", "200"))
+
 # Volume the music ducks to while Saathi is speaking or on a call, as a
 # percentage of normal. Music and voice share one speaker; without this
 # the mic hears the music and the wake word never lands.

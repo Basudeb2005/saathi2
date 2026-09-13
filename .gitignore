@@ -8,3 +8,4 @@ contacts.json
 trunk.json
 logs/*.log*
 .pytest_cache/
+song_cache.json

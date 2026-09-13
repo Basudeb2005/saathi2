@@ -115,16 +115,37 @@ class Saathi(Agent):
         Prefer "station" when either would do — a station starts in about a second,
         a song lookup takes several. Only use "song" when they named a specific
         track or artist and a station genuinely wouldn't satisfy them."""
+        # Say something before a slow lookup, not after. Relying on the
+        # model to do this works most of the time, and "most of the time"
+        # leaves someone standing in silence wondering whether the box
+        # heard them — so it's done here, deterministically, and only
+        # when the wait is actually coming.
+        if source in ("song", "auto") and not self.music.cache.get(query):
+            self._say_soon(context, "Let me find that for you.")
+
         try:
-            return self.music.play(query, source=source)
+            # In a thread: this is a blocking HTTP call that can take
+            # fifteen seconds, and on the event loop it would stall audio
+            # and turn handling for all of it.
+            return await asyncio.to_thread(self.music.play, query, source)
         except MusicError as e:
             return str(e)
+
+    @staticmethod
+    def _say_soon(context: RunContext, text: str) -> None:
+        """Speak now without waiting for it to finish — the point is that
+        the search runs *while* this plays."""
+        try:
+            context.session.say(text)
+        except Exception as e:
+            # A filler line is never worth failing a request over.
+            log.info("Couldn't speak the filler: %s", e)
 
     @function_tool()
     async def pause_music(self, context: RunContext) -> str:
         """Pause whatever is playing."""
         try:
-            return self.music.pause()
+            return await asyncio.to_thread(self.music.pause)
         except MusicError as e:
             return str(e)
 
@@ -132,7 +153,7 @@ class Saathi(Agent):
     async def resume_music(self, context: RunContext) -> str:
         """Resume music that was paused."""
         try:
-            return self.music.resume()
+            return await asyncio.to_thread(self.music.resume)
         except MusicError as e:
             return str(e)
 
@@ -140,7 +161,7 @@ class Saathi(Agent):
     async def stop_music(self, context: RunContext) -> str:
         """Stop the music entirely."""
         try:
-            return self.music.stop()
+            return await asyncio.to_thread(self.music.stop)
         except MusicError as e:
             return str(e)
 
@@ -148,7 +169,7 @@ class Saathi(Agent):
     async def next_track(self, context: RunContext) -> str:
         """Skip to the next track."""
         try:
-            return self.music.next_track()
+            return await asyncio.to_thread(self.music.next_track)
         except MusicError as e:
             return str(e)
 
@@ -156,7 +177,7 @@ class Saathi(Agent):
     async def set_music_volume(self, context: RunContext, volume: int) -> str:
         """Set music volume, 0 to 100."""
         try:
-            return self.music.set_volume(volume)
+            return await asyncio.to_thread(self.music.set_volume, volume)
         except MusicError as e:
             return str(e)
 
@@ -168,7 +189,7 @@ class Saathi(Agent):
         preference, something coming up in their life. Write it as a short complete
         sentence that will still make sense months from now, e.g. "Her grandson Arun
         is sitting his exams in March"."""
-        ok = self.memory.remember(fact, kind="fact")
+        ok = await asyncio.to_thread(self.memory.remember, fact, "fact")
         # Deliberately bland either way. The person didn't ask for a filing
         # system, and "I've made a note" mid-conversation is jarring.
         return "Noted." if ok else "Noted."
@@ -178,7 +199,7 @@ class Saathi(Agent):
         """Look up what you know about this person, for when they refer to something
         from an earlier conversation. `query` is what you're trying to remember,
         e.g. "her grandson" or "what she likes listening to"."""
-        facts = self.memory.recall(query, limit=MEMORY_RECALL_LIMIT)
+        facts = await asyncio.to_thread(self.memory.recall, query, MEMORY_RECALL_LIMIT)
         if not facts:
             return "Nothing remembered about that."
         return "\n".join(f"- {f.text}" for f in facts)

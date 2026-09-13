@@ -6,8 +6,14 @@ from saathi.music.radio import RadioError, Station
 from tests.fakes import FakeMopidy, FakeRadio
 
 
-def player(mopidy=None, radio=None):
-    return MusicPlayer(mopidy=mopidy or FakeMopidy(), radio=radio or FakeRadio())
+def player(mopidy=None, radio=None, cache=None):
+    # An isolated cache per player: tests must not read each other's
+    # results, nor write into the developer's real cache file.
+    import tempfile, pathlib as _p
+    from saathi.music.player import SongCache
+
+    cache = cache or SongCache(path=_p.Path(tempfile.mkdtemp()) / "cache.json")
+    return MusicPlayer(mopidy=mopidy or FakeMopidy(), radio=radio or FakeRadio(), cache=cache)
 
 
 def test_station_source_plays_the_stream_url():
@@ -122,3 +128,61 @@ def test_the_other_results_stay_queued_for_next():
     mopidy = FakeMopidy(search_results=["youtube:video/a", "youtube:video/b"])
     player(mopidy).play("lag ja gale", source="song")
     assert mopidy.played == [["youtube:video/a", "youtube:video/b"]]
+
+
+# ---- the song cache ----------------------------------------------------
+
+def _cache(tmp_path):
+    from saathi.music.player import SongCache
+
+    return SongCache(path=tmp_path / "cache.json")
+
+
+def test_a_repeat_request_skips_the_search(tmp_path):
+    """A first YouTube lookup is ten to twenty seconds on a Pi. The
+    second time should be instant."""
+    cache = _cache(tmp_path)
+    mopidy = FakeMopidy(search_results=["youtube:video/a"])
+    player(mopidy, cache=cache).play("lag ja gale", source="song")
+
+    again = FakeMopidy(search_results=[])          # would find nothing
+    reply = player(again, cache=cache).play("lag ja gale", source="song")
+    assert again.actions == []                      # never searched
+    assert again.played == [["youtube:video/a"]]
+    assert "Playing" in reply
+
+
+def test_the_cache_ignores_case_and_spacing(tmp_path):
+    cache = _cache(tmp_path)
+    cache.put("Lag  Ja   Gale", ["youtube:video/a"])
+    assert cache.get("lag ja gale") == ["youtube:video/a"]
+
+
+def test_nothing_found_is_not_cached(tmp_path):
+    cache = _cache(tmp_path)
+    cache.put("nonsense", [])
+    assert cache.get("nonsense") is None
+
+
+def test_the_cache_survives_a_restart(tmp_path):
+    _cache(tmp_path).put("lag ja gale", ["youtube:video/a"])
+    assert _cache(tmp_path).get("lag ja gale") == ["youtube:video/a"]
+
+
+def test_oldest_entries_are_evicted_first(tmp_path):
+    from saathi.music.player import SongCache
+
+    cache = SongCache(path=tmp_path / "cache.json", size=2)
+    for name in ("first", "second", "third"):
+        cache.put(name, [f"youtube:video/{name}"])
+    assert cache.get("first") is None
+    assert cache.get("third") is not None
+
+
+def test_a_corrupt_cache_file_is_survivable(tmp_path):
+    """A cache that can't be read is a slower lookup, never a failed one."""
+    from saathi.music.player import SongCache
+
+    path = tmp_path / "cache.json"
+    path.write_text("{ this is not json")
+    assert SongCache(path=path).get("anything") is None

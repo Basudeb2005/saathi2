@@ -286,7 +286,12 @@ def cmd_test(args) -> int:
         return 1
 
     print(f"  {GREEN}✓{RESET} invite accepted — their phone should be ringing.")
-    print(f"  {DIM}Accepted by the trunk isn't the same as answered.{RESET}\n")
+    print(f"  {DIM}Accepted by the trunk isn't the same as answered.{RESET}")
+    print()
+    print(f"  {YELLOW}!{RESET} Nothing else is in the room. This command only proves the")
+    print(f"    trunk works — answering it gets you silence and a call that")
+    print(f"    drops, because there's no one on this end.")
+    print(f"    For a real call, run {BOLD}saathi.device{RESET} and say \"call {args.name}\".\n")
     return 0
 
 

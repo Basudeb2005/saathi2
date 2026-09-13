@@ -52,6 +52,28 @@ class Station:
         )
 
 
+# Words that carry no signal in a station search. "Play some old Hindi
+# songs" is really a search for "hindi": everything else is politeness,
+# and searching for "songs" returns noise.
+_FILLER = {
+    "play", "some", "put", "on", "the", "a", "an", "me", "my", "please",
+    "song", "songs", "music", "station", "radio", "listen", "to", "of",
+    "and", "for", "want", "like", "old", "new", "good", "nice", "lets",
+    "let", "hear", "something", "anything", "channel",
+}
+
+
+def _keywords(query: str) -> List[str]:
+    """The words worth searching on, longest first.
+
+    Longest first because the specific word is usually the useful one:
+    "hindi" beats "fm" when both are present.
+    """
+    words = [w.strip(".,!?'\"").lower() for w in query.split()]
+    words = [w for w in words if w and w not in _FILLER and len(w) > 2]
+    return sorted(dict.fromkeys(words), key=len, reverse=True)
+
+
 class RadioBrowser:
     def __init__(
         self,
@@ -107,13 +129,18 @@ class RadioBrowser:
     def search(self, query: str, limit: int = 10) -> List[Station]:
         """Find working stations matching `query`, most-listened first.
 
-        Searched by name first, then by tag. "Play some jazz" is a tag
-        match; "play BBC Radio 4" is a name match, and a user won't tell
-        you which kind they meant -- so try both and take names first,
-        since an exact name match is almost always what was intended.
+        People don't speak in tags. "Play some old Hindi songs" has no
+        station called that and no tag called that, but there are plenty
+        of stations tagged "hindi" and plenty whose language is Hindi —
+        so the query is widened progressively instead of failing on the
+        literal phrase.
 
-        `hidebroken` is what keeps this usable: without it the directory
-        happily returns stations whose stream died years ago.
+        Order matters: an exact name match is almost always what was
+        meant ("play BBC Radio 4"), so it goes first. The word-by-word
+        attempts come last, since they're the loosest.
+
+        `hidebroken` is what keeps this usable at all: without it the
+        directory happily returns stations whose stream died years ago.
         """
         if not query.strip():
             raise RadioError("A search term is required")
@@ -125,15 +152,34 @@ class RadioBrowser:
             "reverse": "true",
         }
 
-        stations = [Station.from_api(d) for d in self._get("/json/stations/search", name=query, **common)]
-        if len(stations) < limit:
-            seen = {s.url for s in stations}
-            by_tag = [Station.from_api(d) for d in self._get("/json/stations/search", tag=query, **common)]
-            stations.extend(s for s in by_tag if s.url and s.url not in seen)
+        found: List[Station] = []
+        seen = set()
 
-        playable = [s for s in stations if s.url][:limit]
-        log.info("Radio search %r -> %d playable station(s)", query, len(playable))
-        return playable
+        def collect(**params) -> None:
+            if len(found) >= limit:
+                return
+            for row in self._get("/json/stations/search", **params, **common):
+                station = Station.from_api(row)
+                if station.url and station.url not in seen:
+                    seen.add(station.url)
+                    found.append(station)
+                if len(found) >= limit:
+                    return
+
+        collect(name=query)
+        collect(tag=query)
+
+        # Widen: each meaningful word as a tag, and as a language. A
+        # language hit is what turns "old hindi songs" into something
+        # playable, and is usually a better match than a tag.
+        for word in _keywords(query):
+            if len(found) >= limit:
+                break
+            collect(language=word)
+            collect(tag=word)
+
+        log.info("Radio search %r -> %d playable station(s)", query, len(found))
+        return found[:limit]
 
     def best(self, query: str) -> Optional[Station]:
         """The single station to play for `query`, or None."""

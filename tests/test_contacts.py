@@ -78,3 +78,43 @@ def test_prompt_listing_omits_addresses(registry):
     listing = registry.describe_for_prompt()
     assert "doctor" in listing and "Dr. Rao" in listing
     assert "+15551234567" not in listing
+
+
+# ---- forgiving the way speech recognition hears names -------------------
+
+def test_exact_name_still_wins(registry):
+    registry.add("basudeb", "sip", "sip:b@x.com")
+    registry.add("basudev", "sip", "sip:d@x.com")
+    assert registry.get("basudeb").address == "sip:b@x.com"
+
+
+def test_case_is_ignored(registry):
+    registry.add("basudeb", "sip", "sip:b@x.com")
+    assert registry.get("Basudeb").address == "sip:b@x.com"
+
+
+def test_a_near_miss_matches():
+    """Names are what STT is worst at — "Basudeb" comes back as Basudev
+    or Vasudev depending on the room."""
+    import pytest as _pytest
+    from saathi.contacts import ContactsRegistry
+    import tempfile, pathlib
+    path = pathlib.Path(tempfile.mkdtemp()) / "c.json"
+    r = ContactsRegistry(path=path)
+    r.add("basudeb", "sip", "sip:b@x.com")
+    for heard in ("basudev", "Vasudeb", "basudeep"):
+        assert r.get(heard).address == "sip:b@x.com", heard
+
+
+def test_two_plausible_matches_refuse_rather_than_guess(registry):
+    """Dialling the wrong person is worse than asking."""
+    registry.add("basudeb", "sip", "sip:b@x.com")
+    registry.add("basudev", "sip", "sip:d@x.com")
+    with pytest.raises(ContactNotFoundError):
+        registry.get("basudeeb")
+
+
+def test_a_genuinely_different_name_is_still_rejected(registry):
+    registry.add("daughter", "sip", "sip:d@x.com")
+    with pytest.raises(ContactNotFoundError):
+        registry.get("plumber")

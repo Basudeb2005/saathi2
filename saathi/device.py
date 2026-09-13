@@ -31,7 +31,8 @@ import audioop
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from collections import deque
+from typing import Callable, Deque, Dict, Optional
 
 from saathi.config import (
     AUDIO_OUTPUT_DEVICE,
@@ -59,6 +60,20 @@ log = get_logger("device")
 
 FRAME_SAMPLES = DEVICE_SAMPLE_RATE * DEVICE_FRAME_MS // 1000
 FRAME_BYTES = FRAME_SAMPLES * 2
+
+# About a second of slack per stream. Enough to ride out a scheduling
+# hiccup, short enough that a stalled stream is dropped rather than
+# played back a second late.
+_SPEAKER_QUEUE_FRAMES = 50
+
+
+async def _rest(iterator):
+    """Re-wrap an async iterator we already took one item from."""
+    while True:
+        try:
+            yield await iterator.__anext__()
+        except StopAsyncIteration:
+            return
 
 
 class DeviceError(Exception):
@@ -195,13 +210,33 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
     room = rtc.Room()
     timer = IdleTimer()
     far_end = FarEnd()
-    players: list[subprocess.Popen] = []
+    # Built on the first track, from that track's own format — TTS and a
+    # phone call don't arrive at the same rate.
+    speaker: Dict[str, Speaker] = {}
+    mixer: Dict[str, asyncio.Task] = {}
 
     @room.on("track_subscribed")
     def _on_track(track, publication, participant):
-        if track.kind == rtc.TrackKind.KIND_AUDIO:
-            log.info("Hearing %s", participant.identity)
-            asyncio.create_task(_play(rtc.AudioStream(track), timer, players, far_end))
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        log.info("Hearing %s", participant.identity)
+
+        async def start():
+            stream = rtc.AudioStream(track)
+            iterator = stream.__aiter__()
+            try:
+                first = await iterator.__anext__()
+            except StopAsyncIteration:
+                return
+
+            if "s" not in speaker:
+                speaker["s"] = Speaker(first.frame.sample_rate, first.frame.num_channels)
+                mixer["m"] = asyncio.create_task(speaker["s"].run())
+
+            speaker["s"].submit(participant.identity, bytes(first.frame.data))
+            await _play(_rest(iterator), timer, speaker["s"], far_end, participant.identity)
+
+        asyncio.create_task(start())
 
     log.info("Joining room=%s as %s at %s", room_name, DEVICE_IDENTITY, LIVEKIT_URL)
     try:
@@ -244,8 +279,10 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
         await _pump_mic(mic, source, timer, rtc, far_end)
     finally:
         _stop(mic)
-        for p in players:
-            _stop(p)
+        for task in mixer.values():
+            task.cancel()
+        if "s" in speaker:
+            speaker["s"].close()
         await room.disconnect()
         log.info("Left room=%s", room_name)
 
@@ -298,20 +335,80 @@ async def _pump_mic(mic, source, timer: IdleTimer, rtc, far_end: "FarEnd") -> No
         )
 
 
-async def _play(stream, timer: IdleTimer, players: list, far_end: "FarEnd") -> None:
-    """LiveKit -> speaker. aplay is started from the first frame's own
-    format rather than an assumed one, since TTS and a phone call arrive
-    at different rates."""
-    player = None
+class Speaker:
+    """One aplay for the whole room, with the streams mixed into it.
+
+    A player per track looked fine until a call: the agent and the person
+    on the phone each got their own aplay, both opened the same ALSA
+    device, and the result was a 163-second underrun. ALSA does not mix
+    for you unless dmix happens to be configured, which on a Pi it
+    usually isn't.
+
+    So there is exactly one process, and audio is summed here in int16
+    with clipping — which is also what makes a three-way call sound like
+    a conversation rather than whoever spoke last.
+    """
+
+    def __init__(self, sample_rate: int, channels: int):
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self._streams: Dict[str, Deque[bytes]] = {}
+        self._proc = _spawn_aplay(sample_rate, channels)
+        log.info("Speaker open at %dHz %dch", sample_rate, channels)
+
+    def submit(self, who: str, pcm: bytes) -> None:
+        self._streams.setdefault(who, deque(maxlen=_SPEAKER_QUEUE_FRAMES)).append(pcm)
+
+    def _mix(self) -> Optional[bytes]:
+        """One frame from everyone who has audio waiting, summed."""
+        frames = [q.popleft() for q in self._streams.values() if q]
+        if not frames:
+            return None
+        if len(frames) == 1:
+            return frames[0]
+
+        # Pad to the longest, then sum pairwise. audioop clips at int16
+        # rather than wrapping, so two loud speakers distort instead of
+        # turning into noise.
+        longest = max(len(f) for f in frames)
+        mixed = frames[0].ljust(longest, b"\x00")
+        for frame in frames[1:]:
+            mixed = audioop.add(mixed, frame.ljust(longest, b"\x00"), 2)
+        return mixed
+
+    async def run(self) -> None:
+        """Drain the queues at real time until cancelled."""
+        frame_s = DEVICE_FRAME_MS / 1000
+        try:
+            while True:
+                pcm = self._mix()
+                if pcm is None:
+                    await asyncio.sleep(frame_s)
+                    continue
+                try:
+                    self._proc.stdin.write(pcm)
+                    self._proc.stdin.flush()
+                except (BrokenPipeError, ValueError):
+                    log.warning("Speaker closed underneath us")
+                    return
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+
+    def close(self) -> None:
+        if self._proc.stdin:
+            try:
+                self._proc.stdin.close()
+            except Exception:
+                pass
+        _stop(self._proc)
+
+
+async def _play(stream, timer: IdleTimer, speaker: "Speaker", far_end: "FarEnd", who: str) -> None:
+    """One remote track -> the shared speaker."""
     try:
         async for event in stream:
-            frame = event.frame
-            if player is None:
-                player = _spawn_aplay(frame.sample_rate, frame.num_channels)
-                players.append(player)
-                log.info("Playing %dHz %dch", frame.sample_rate, frame.num_channels)
-
-            pcm = bytes(frame.data)
+            pcm = bytes(event.frame.data)
 
             # Only sound counts. LiveKit delivers frames continuously
             # while the track is subscribed, silence included — so poking
@@ -320,18 +417,15 @@ async def _play(stream, timer: IdleTimer, players: list, far_end: "FarEnd") -> N
             # second thing anyone said.
             if is_speech(pcm):
                 timer.poke()
-                far_end.heard()
+                # Only the agent's own voice should mute our microphone.
+                # Muting for the person on the phone would stop them ever
+                # hearing us, which is the entire point of the call.
+                if who.startswith("agent"):
+                    far_end.heard()
 
-            player.stdin.write(pcm)
-            player.stdin.flush()
+            speaker.submit(who, pcm)
     except Exception as e:
-        log.info("Playback stream ended: %s", e)
-    finally:
-        if player and player.stdin:
-            try:
-                player.stdin.close()
-            except Exception:
-                pass
+        log.info("Playback stream for %s ended: %s", who, e)
 
 
 # ---- the forever loop ---------------------------------------------------

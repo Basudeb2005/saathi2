@@ -39,6 +39,7 @@ through to the calling layer.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -164,10 +165,32 @@ class ContactsRegistry:
         return sorted(self._data.keys())
 
     def get(self, name: str) -> Contact:
-        try:
-            return self._data[name]
-        except KeyError:
-            raise ContactNotFoundError(name, self.names()) from None
+        """Look a contact up, forgiving how speech recognition heard it.
+
+        "Basudeb" comes back as Basudev, Vasudev or Basudeep depending on
+        the room and the accent, and names are exactly what STT is worst
+        at. Refusing those is a box that won't call your son because it
+        misheard one consonant.
+
+        Only close matches count, and only when one contact is clearly
+        closest: two plausible candidates means it must ask rather than
+        pick, since dialling the wrong person is worse than a question.
+        """
+        key = (name or "").strip()
+        if key in self._data:
+            return self._data[key]
+
+        lowered = {n.lower(): n for n in self._data}
+        if key.lower() in lowered:
+            return self._data[lowered[key.lower()]]
+
+        close = difflib.get_close_matches(key.lower(), list(lowered), n=2, cutoff=0.7)
+        if len(close) == 1:
+            matched = lowered[close[0]]
+            log.info("Heard %r, matched contact %r", name, matched)
+            return self._data[matched]
+
+        raise ContactNotFoundError(name, self.names())
 
     def describe_for_prompt(self) -> str:
         """Compact listing for the agent's system prompt. Addresses are

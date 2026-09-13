@@ -66,6 +66,10 @@ dim "installing python dependencies — this takes 5-15 minutes on a Pi,"
 dim "and pip goes quiet for long stretches while it builds. Let it run."
 echo
 ./venv/bin/pip install --progress-bar on -r requirements.txt
+
+# See the note in requirements.txt: --no-deps keeps pip from dragging in
+# tflite-runtime and silently downgrading to an API we can't use.
+./venv/bin/pip install -q --no-deps "openwakeword==0.6.0"
 ok "python dependencies"
 
 [ -f contacts.json ] || cp contacts.json.example contacts.json

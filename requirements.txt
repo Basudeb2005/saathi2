@@ -10,9 +10,19 @@ livekit-agents[openai,silero]~=1.0
 livekit
 livekit-api
 
-# Wake word (runs on-device). openwakeword is the default and needs
-# no account; pvporcupine is only needed for WAKE_ENGINE=porcupine.
-openwakeword
+# Wake word (runs on-device). openwakeword is the default and needs no
+# account; pvporcupine is only needed for WAKE_ENGINE=porcupine.
+#
+# openwakeword is NOT listed here — it declares tflite-runtime on Linux,
+# which has no Python 3.13 wheel, so pip quietly resolves back to an
+# ancient release with an incompatible Model API and fails at runtime
+# instead of at install. We only ever use the ONNX path and every tflite
+# import in the package is lazy, so setup.sh installs it with --no-deps
+# and its real runtime dependencies are listed here instead.
+onnxruntime
+tqdm
+scipy
+scikit-learn
 numpy
 # pvporcupine
 

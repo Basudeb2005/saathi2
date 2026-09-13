@@ -147,9 +147,20 @@ class OpenWakeWordEngine:
         # models may already be on disk from a previous run, and failing
         # the whole engine over a download that wasn't needed would be
         # worse than letting Model() report a genuinely missing file.
+        # A version too old to have download_models is also too old to
+        # accept `wakeword_models`, and would otherwise fail later with a
+        # baffling error from deep inside AudioFeatures. Catch it here,
+        # where we can name the actual cause and the one-line fix.
+        if not hasattr(oww_utils, "download_models"):
+            raise WakeWordError(
+                "openwakeword is too old to use — pip resolved back to a pre-0.6 "
+                "release because tflite-runtime has no wheel for this Python. "
+                "Fix it with:  pip install --no-deps --force-reinstall openwakeword==0.6.0"
+            )
+
         try:
             log.info("Ensuring pretrained wake models are downloaded")
-            oww_utils.download_models()
+            oww_utils.download_models(list(self.words))
         except Exception as e:
             log.warning("Couldn't download wake models (%s) — trying what's on disk", e)
 

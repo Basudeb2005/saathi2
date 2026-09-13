@@ -47,9 +47,16 @@ cd "$DIR"
 ok "repo at $DIR"
 
 # --- python ------------------------------------------------------------
+# Deliberately NOT quiet. This step downloads and builds a few hundred MB
+# on a slow ARM board and can take 15 minutes; with no output people
+# reasonably conclude it has hung and kill it.
 [ -d venv ] || python3 -m venv venv
 ./venv/bin/pip install -q --upgrade pip
-./venv/bin/pip install -q -r requirements.txt
+
+dim "installing python dependencies — this takes 5-15 minutes on a Pi,"
+dim "and pip goes quiet for long stretches while it builds. Let it run."
+echo
+./venv/bin/pip install --progress-bar on -r requirements.txt
 ok "python dependencies"
 
 [ -f contacts.json ] || cp contacts.json.example contacts.json

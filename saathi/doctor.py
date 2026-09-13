@@ -210,7 +210,7 @@ def check_mopidy() -> Result:
     except Exception as e:
         return Result(
             FAIL, f"unreachable at {MOPIDY_RPC_URL} ({type(e).__name__})",
-            "sudo systemctl start mopidy — and enable [http] in /etc/mopidy/mopidy.conf",
+                "bash scripts/install-mopidy.sh  (Debian's 3.4.2 is broken on Trixie)",
         )
     # Reporting "playing" is not the same as being audible: Mopidy has
     # its own GStreamer output, and an unconfigured one goes to HDMI
@@ -226,6 +226,12 @@ def check_mopidy() -> Result:
                 break
     except Exception:
         pass
+
+    if version and str(version).startswith("3"):
+        return Result(
+            WARN, f"Mopidy {version} — the broken Debian build",
+            "bash scripts/install-mopidy.sh — 3.x can't play on GStreamer 1.26",
+        )
 
     if sink and "autoaudiosink" in sink:
         return Result(

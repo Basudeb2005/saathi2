@@ -89,33 +89,43 @@ PY
 ok "config at $CONF"
 
 # --- service -----------------------------------------------------------
-# A user service, not a system one: it reads ~/.config/mopidy and plays
-# to this user's audio, which is what the agent shares a speaker with.
-mkdir -p "$HOME/.config/systemd/user"
-cat > "$HOME/.config/systemd/user/mopidy.service" <<UNIT
+# A system unit running AS this user, not a `systemctl --user` one.
+# Over SSH there may be no per-user systemd manager, and the user-unit
+# version reported success while starting nothing and logging nothing.
+# This also matches how saathi-agent@ and saathi@ are installed, so
+# there is one place to look when something isn't running.
+mkdir -p "$HOME/Music"   # silences a startup warning about media_dirs
+
+sudo tee /etc/systemd/system/mopidy-venv.service >/dev/null <<UNIT
 [Unit]
 Description=Mopidy 4 (venv)
 After=network-online.target sound.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=$USER
+Group=audio
+WorkingDirectory=$HOME
+Environment=HOME=$HOME
 ExecStart=$VENV/bin/mopidy
 Restart=always
 RestartSec=5
 StartLimitIntervalSec=0
+SupplementaryGroups=audio
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 UNIT
 
-# Linger FIRST. Without it there may be no user systemd manager at all
-# over SSH, and `systemctl --user enable --now` then reports success
-# while starting nothing — which is why the journal came back empty.
-sudo loginctl enable-linger "$USER" >/dev/null 2>&1 || warn "couldn't enable linger"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+# Clean up the user-unit attempt so two of them can't race for the port.
+systemctl --user disable --now mopidy >/dev/null 2>&1 || true
+rm -f "$HOME/.config/systemd/user/mopidy.service" \
+      "$HOME/.config/systemd/user/default.target.wants/mopidy.service"
 
-systemctl --user daemon-reload 2>/dev/null || warn "no user systemd manager"
-systemctl --user enable --now mopidy 2>/dev/null || warn "couldn't start the user service"
+sudo systemctl daemon-reload
+sudo systemctl enable --now mopidy-venv
+ok "service installed (mopidy-venv)"
 
 for _ in $(seq 1 20); do
   curl -fsS -m 1 -X POST http://127.0.0.1:6680/mopidy/rpc \
@@ -136,7 +146,7 @@ if [ -n "$VERSION_JSON" ]; then
   esac
 else
   warn "not responding. Its own log:"
-  journalctl --user -u mopidy -n 30 --no-pager 2>/dev/null | sed 's/^/    /' || true
+  journalctl -u mopidy-venv -n 30 --no-pager 2>/dev/null | sed 's/^/    /' || true
 
   # An empty journal means the service never ran, not that it ran
   # quietly — so run it in the foreground where the error has nowhere to
@@ -148,4 +158,4 @@ fi
 
 echo
 echo "  backends:  ./venv/bin/python -m saathi.music.cli backends"
-echo "  logs:      journalctl --user -fu mopidy"
+echo "  logs:      journalctl -fu mopidy-venv"

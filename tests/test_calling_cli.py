@@ -76,3 +76,15 @@ def test_check_reports_not_ready_when_nothing_is_configured(registry, monkeypatc
 
 def test_test_command_rejects_an_unknown_name(registry):
     assert main(["test", "nobody"]) == 1
+
+
+def test_trunk_allows_media_encryption_by_default():
+    """Linphone requires SRTP out of the box; offering plain RTP comes
+    back as SIP 488 'Not acceptable here' with no other explanation."""
+    trunk = build_trunk("t", "sip.linphone.org", "saathi", "pw")["trunk"]
+    assert trunk["media_encryption"] == "SIP_MEDIA_ENCRYPT_ALLOW"
+
+
+def test_media_encryption_can_be_overridden():
+    trunk = build_trunk("t", "a", "u", "p", media_encryption="SIP_MEDIA_ENCRYPT_REQUIRE")["trunk"]
+    assert trunk["media_encryption"] == "SIP_MEDIA_ENCRYPT_REQUIRE"

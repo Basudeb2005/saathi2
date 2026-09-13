@@ -76,11 +76,25 @@ def _confirm(prompt: str, default: bool = True) -> bool:
 
 # ---- pure helpers (tested) ---------------------------------------------
 
-def build_trunk(name: str, address: str, username: str, password: str) -> dict:
+def build_trunk(
+    name: str,
+    address: str,
+    username: str,
+    password: str,
+    media_encryption: str = "SIP_MEDIA_ENCRYPT_ALLOW",
+) -> dict:
     """The JSON `lk sip outbound create` expects.
 
     `numbers` is the identity calls appear to come from. For a SIP trunk
     that's the account's own username; for PSTN it's the purchased number.
+
+    `media_encryption` defaults to ALLOW rather than LiveKit's DISABLE
+    because softphones commonly require SRTP — Linphone does out of the
+    box — and an offer of plain RTP comes back as SIP 488 "Not
+    acceptable here". That reads as a rejected call with no explanation
+    unless you go and read the SIP trace. ALLOW negotiates encryption
+    when the far end wants it and stays compatible when it doesn't;
+    REQUIRE would refuse anything that can't do SRTP.
     """
     return {
         "trunk": {
@@ -89,6 +103,7 @@ def build_trunk(name: str, address: str, username: str, password: str) -> dict:
             "numbers": [username],
             "auth_username": username,
             "auth_password": password,
+            "media_encryption": media_encryption,
         }
     }
 
@@ -174,9 +189,10 @@ def cmd_trunk(args) -> bool:
     _cmd(f"lk sip outbound create {TRUNK_PATH}")
     print(f"  That prints a trunk id like {BOLD}ST_7fK2mQx9pLnV{RESET}. Save it with:")
     _cmd("python -m saathi.setup --only calling")
-    print(f"  {YELLOW}If it fails with 401 or 403{RESET}, the SIP server wants a REGISTER")
-    print("  before it will accept a call. That's the known failure — see")
-    print("  SETUP.md §5d for the self-hosted Asterisk fallback.\n")
+    print(f"  {DIM}media_encryption is ALLOW: most softphones require SRTP, and{RESET}")
+    print(f"  {DIM}offering plain RTP comes back as SIP 488 'Not acceptable here'.{RESET}")
+    print(f"\n  {YELLOW}401/403{RESET} means the server wants a REGISTER first — SETUP.md §5d.")
+    print(f"  {YELLOW}488{RESET} means media negotiation failed — check media_encryption.\n")
     return True
 
 
@@ -281,8 +297,9 @@ def cmd_test(args) -> int:
         asyncio.run(place_call(args.name, contact, SAATHI_ROOM_NAME))
     except CallError as e:
         print(f"  {RED}✗{RESET} {e}")
-        print(f"\n  {DIM}Check logs/saathi.log for the SIP response.{RESET}")
-        print(f"  {DIM}401/403 means the trunk auth problem — SETUP.md §5d.{RESET}\n")
+        print(f"\n  {DIM}The SIP-level reason is in your LiveKit dashboard:{RESET}")
+        print(f"  {DIM}  Telephony -> Calls -> the call -> Events -> Event payload{RESET}")
+        print(f"  {DIM}401/403 = auth (SETUP.md §5d).  488 = media/codec mismatch.{RESET}\n")
         return 1
 
     print(f"  {GREEN}✓{RESET} invite accepted — their phone should be ringing.")

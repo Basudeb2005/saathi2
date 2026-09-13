@@ -26,6 +26,10 @@ free tier; self-host LiveKit only when you outgrow it.
 
 ## 1. Keys
 
+> Getting these is the only manual part. `setup.sh` (step 2) will ask for
+> them, so you can collect them now and paste them in when prompted —
+> there's no file to edit.
+
 **You only need one API key to start.** OpenAI does the LLM, speech-to-text
 and text-to-speech adequately. Add the specialists later, once you know
 what actually bothers you.
@@ -59,34 +63,40 @@ LIVEKIT_API_SECRET=...
 
 ---
 
-## 2. The Pi
+## 2. The Pi — one command
 
 ```bash
-sudo apt update
-sudo apt install -y python3-venv alsa-utils mopidy
-sudo pip3 install --break-system-packages Mopidy-YouTube
-
-git clone https://github.com/Basudeb2005/saathi2.git
-cd saathi2
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
-
-cp .env.example .env          # paste your two keys in
-cp contacts.json.example contacts.json
+git clone https://github.com/Basudeb2005/saathi2.git && bash saathi2/setup.sh
 ```
 
-Check the mic exists before anything else — this is the single most
-common reason nothing works:
+That installs the system packages (`mopidy`, `alsa-utils`, `espeak-ng`),
+creates the venv, installs the Python dependencies, checks for a
+microphone, and then asks for your keys in the terminal. Nothing to edit
+by hand.
+
+It's safe to re-run — every step is skipped if it's already done, so it
+doubles as "repair my install". To change keys later without the rest:
 
 ```bash
-arecord -l                    # must list a capture device
+./venv/bin/python -m saathi.setup
+```
+
+The prompt keeps whatever is already set (press Enter to keep it),
+validates obvious mistakes, skips the optional sections unless you ask
+for them, and writes `.env` mode 600 so it isn't world-readable. Keys you
+added by hand are preserved.
+
+### Check the microphone
+
+If the script warned about no capture device, stop here — it's the single
+most common reason everything else looks broken later:
+
+```bash
+arecord -l                    # must list a card
 arecord -d 3 test.wav && aplay test.wav
 ```
 
-If `arecord -l` lists nothing, stop here. The Pi's onboard audio is
-playback-only; you need a USB mic or a HAT.
-
----
+The Pi's onboard audio is playback-only. You need a USB mic or a HAT.
 
 ## 3. Music
 

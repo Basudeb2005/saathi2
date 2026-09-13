@@ -134,13 +134,23 @@ You need **one API key** to start (OpenAI does LLM, STT and TTS) plus a
 free LiveKit Cloud project. Deepgram, ElevenLabs and Picovoice are
 upgrades you add later, if and when something bothers you.
 
+One command on a fresh Pi — installs everything, then asks for your keys
+in the terminal so you never open a dotenv by hand:
+
 ```bash
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
+git clone https://github.com/Basudeb2005/saathi2.git && bash saathi2/setup.sh
+```
 
-cp .env.example .env              # two keys
-cp contacts.json.example contacts.json
+Re-run it any time to add a key or repair the install. To change keys
+later without the rest:
 
+```bash
+./venv/bin/python -m saathi.setup
+```
+
+Then:
+
+```bash
 ./venv/bin/python -m saathi.agent dev
 ```
 

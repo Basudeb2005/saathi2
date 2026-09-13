@@ -19,6 +19,7 @@ again. That is the whole error-handling policy.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from livekit import agents
@@ -33,6 +34,7 @@ from saathi.config import (
     HALF_DUPLEX,
     DEEPGRAM_STT_MODEL,
     OPENAI_STT_MODEL,
+    OPENAI_TTS_MODEL,
     ELEVENLABS_VOICE_ID,
     LLM_MODEL,
     OPENAI_TTS_VOICE,
@@ -83,13 +85,11 @@ class Saathi(Agent):
         music: MusicPlayer,
         room_name: str,
         memory: Optional[MemoryStore] = None,
+        remembered: str = "",
     ):
         self.memory = memory or build_memory()
 
         languages = ", ".join(LANGUAGE_NAMES.get(c, c) for c in AGENT_LANGUAGES)
-        # Fetched once, at construction: a network round trip before every
-        # reply would show up as latency on every single turn.
-        remembered = self.memory.describe_for_prompt(self.memory.profile())
 
         super().__init__(instructions=INSTRUCTIONS.format(
             contacts=contacts.describe_for_prompt(),
@@ -246,7 +246,22 @@ def _build_tts():
         from livekit.plugins import elevenlabs
 
         return elevenlabs.TTS(voice_id=ELEVENLABS_VOICE_ID) if ELEVENLABS_VOICE_ID else elevenlabs.TTS()
-    return openai.TTS(voice=OPENAI_TTS_VOICE)
+    return openai.TTS(model=OPENAI_TTS_MODEL, voice=OPENAI_TTS_VOICE)
+
+
+def prewarm(proc: agents.JobProcess) -> None:
+    """Load everything slow before a job arrives.
+
+    Without this the first wake pays for it: the worker logged 6.4s of
+    "no warmed process available" plus a 1.4s stall importing the OpenAI
+    client, all of it while someone stood there having already said the
+    wake word.
+    """
+    proc.userdata["vad"] = silero.VAD.load()
+
+
+def _profile_text(memory: MemoryStore) -> str:
+    return memory.describe_for_prompt(memory.profile())
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
@@ -255,11 +270,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     memory = build_memory()
     log.info("Memory backend: %s", memory.name)
 
+    # In a thread: the memory client is synchronous, and calling it
+    # directly here blocked the agent's event loop for 2.2 seconds —
+    # which delays audio and turn handling, not just this one call.
+    remembered = await asyncio.to_thread(_profile_text, memory)
+
     session = AgentSession(
         stt=_build_stt(),
         llm=openai.LLM(model=LLM_MODEL),
         tts=_build_tts(),
-        vad=silero.VAD.load(),
+        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
         # With half-duplex the microphone is muted while the agent talks,
         # so anything that "interrupts" is the room, not the user — and
         # letting it cut the reply off mid-sentence every few seconds is
@@ -274,6 +294,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             music=music,
             room_name=ctx.room.name or SAATHI_ROOM_NAME,
             memory=memory,
+            remembered=remembered,
         ),
     )
 
@@ -284,4 +305,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(
+        agents.WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm)
+    )

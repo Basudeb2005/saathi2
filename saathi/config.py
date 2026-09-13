@@ -59,6 +59,11 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 # and on Indian languages, which is most of what this box will hear.
 OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-transcribe")
 DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
+# gpt-4o-mini-tts is noticeably quicker to first audio than tts-1, which
+# is what the "slow audio generation" warnings are about. ElevenLabs is
+# quicker still and much better in Hindi and Tamil — worth the extra key
+# once English is working.
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "shimmer")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 

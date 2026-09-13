@@ -261,6 +261,106 @@ def cmd_contacts(args) -> int:
     return 1
 
 
+async def _with_api(fn):
+    from livekit import api as lk_api
+
+    from saathi.config import LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL
+
+    if not (LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET):
+        raise RuntimeError("LiveKit isn't configured — run python -m saathi.setup")
+
+    client = lk_api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+    try:
+        return await fn(client, lk_api)
+    finally:
+        await client.aclose()
+
+
+def cmd_trunks(args) -> int:
+    """List the outbound trunks LiveKit actually has, and what they're set to.
+
+    Worth its own command because the settings that break calls — media
+    encryption above all — are invisible from this side: the API accepts
+    every call request regardless, and the rejection happens two hops
+    away at the far end.
+    """
+    async def run(client, lk_api):
+        return await client.sip.list_sip_outbound_trunk(
+            lk_api.ListSIPOutboundTrunkRequest()
+        )
+
+    try:
+        result = asyncio.run(_with_api(run))
+    except Exception as e:
+        print(f"  {RED}✗{RESET} {e}")
+        return 1
+
+    trunks = list(getattr(result, "items", []) or [])
+    if not trunks:
+        print(f"\n  {DIM}No outbound trunks. Create one: python -m saathi.calling.cli trunk{RESET}\n")
+        return 1
+
+    from livekit.protocol.sip import SIPMediaEncryption
+
+    print()
+    for t in trunks:
+        enc = SIPMediaEncryption.Name(t.media_encryption)
+        warn = "" if enc != "SIP_MEDIA_ENCRYPT_DISABLE" else f"  {YELLOW}← softphones will reject this{RESET}"
+        print(f"  {BOLD}{t.sip_trunk_id}{RESET}  {t.name}")
+        print(f"    address:    {t.address}")
+        print(f"    numbers:    {', '.join(t.numbers)}")
+        print(f"    encryption: {enc}{warn}")
+    print()
+    return 0
+
+
+def cmd_fix_encryption(args) -> int:
+    """Turn SRTP negotiation on for an existing trunk, in place.
+
+    In place rather than delete-and-recreate: the trunk id is already in
+    .env and in whatever notes exist, and changing it means every one of
+    those has to be found again.
+    """
+    target = args.trunk_id or LIVEKIT_SIP_TRUNK_ID
+    if not target:
+        print(f"  {RED}✗{RESET} no trunk id — pass one, or set LIVEKIT_SIP_TRUNK_ID")
+        return 1
+
+    async def run(client, lk_api):
+        from livekit.protocol.sip import SIPMediaEncryption
+
+        listed = await client.sip.list_sip_outbound_trunk(lk_api.ListSIPOutboundTrunkRequest())
+        existing = next((t for t in (getattr(listed, "items", []) or [])
+                         if t.sip_trunk_id == target), None)
+        if existing is None:
+            raise RuntimeError(f"no outbound trunk {target}")
+
+        if existing.media_encryption == SIPMediaEncryption.SIP_MEDIA_ENCRYPT_ALLOW:
+            return existing, False
+
+        # Full-object update: the field-wise variant doesn't cover
+        # media_encryption, so the whole trunk is sent back with one
+        # value changed.
+        updated = lk_api.SIPOutboundTrunkInfo()
+        updated.CopyFrom(existing)
+        updated.media_encryption = SIPMediaEncryption.SIP_MEDIA_ENCRYPT_ALLOW
+        return await client.sip.update_sip_outbound_trunk(target, updated), True
+
+    try:
+        trunk, changed = asyncio.run(_with_api(run))
+    except Exception as e:
+        print(f"  {RED}✗{RESET} {e}")
+        return 1
+
+    if not changed:
+        print(f"  {GREEN}✓{RESET} {target} already allows SRTP — encryption isn't your problem")
+    else:
+        print(f"  {GREEN}✓{RESET} {target} now negotiates SRTP")
+        print(f"  {DIM}Softphones require it; offering plain RTP comes back as 488.{RESET}")
+    print(f"\n  Try a call:  {BOLD}python -m saathi.calling.cli test <name>{RESET}\n")
+    return 0
+
+
 def cmd_check(args) -> int:
     print(f"\n{BOLD}Calling status{RESET}\n")
     rows = calling_status()
@@ -322,6 +422,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("guide", help="walk through the whole setup (start here)")
     sub.add_parser("trunk", help="write trunk.json and print the lk command")
     sub.add_parser("check", help="what's configured and what's missing")
+    sub.add_parser("trunks", help="list LiveKit's trunks and their settings")
+
+    f = sub.add_parser("fix-encryption", help="turn on SRTP for an existing trunk")
+    f.add_argument("trunk_id", nargs="?")
 
     c = sub.add_parser("contacts", help="list, add or remove contacts")
     c.add_argument("action", choices=["list", "add", "remove"], nargs="?", default="list")
@@ -343,6 +447,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_contacts(args)
     if args.command == "check":
         return cmd_check(args)
+    if args.command == "trunks":
+        return cmd_trunks(args)
+    if args.command == "fix-encryption":
+        return cmd_fix_encryption(args)
     if args.command == "test":
         return cmd_test(args)
     return 1

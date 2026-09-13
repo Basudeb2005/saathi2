@@ -76,3 +76,27 @@ def test_uri_schemes_lists_loaded_backends():
 
 def test_uri_schemes_is_empty_not_none_when_unset():
     assert client([rpc_ok(None)]).uri_schemes() == []
+
+
+def test_search_gets_the_longer_timeout():
+    """A YouTube lookup goes through yt-dlp and out to the network; the
+    control-command timeout is far too short for it."""
+    from saathi.config import MOPIDY_SEARCH_TIMEOUT_S
+
+    session = FakeSession([rpc_ok([])])
+    MopidyClient(session=session, timeout=10).search_tracks("lata")
+    assert session.calls[0]["timeout"] == MOPIDY_SEARCH_TIMEOUT_S
+
+
+def test_control_commands_keep_the_short_timeout():
+    session = FakeSession([rpc_ok()])
+    MopidyClient(session=session, timeout=10).stop()
+    assert session.calls[0]["timeout"] == 10
+
+
+def test_a_timeout_does_not_claim_mopidy_is_down():
+    import requests
+
+    session = FakeSession([requests.Timeout("slow")])
+    with pytest.raises(MopidyError, match="in time"):
+        MopidyClient(session=session).search_tracks("lata")

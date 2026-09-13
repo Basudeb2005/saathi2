@@ -21,7 +21,7 @@ from typing import Any, List, Optional
 
 import requests
 
-from saathi.config import MOPIDY_RPC_URL, MOPIDY_TIMEOUT_S
+from saathi.config import MOPIDY_RPC_URL, MOPIDY_SEARCH_TIMEOUT_S, MOPIDY_TIMEOUT_S
 from saathi.logging_setup import get_logger
 
 log = get_logger("music.mopidy")
@@ -41,7 +41,7 @@ class MopidyClient:
         self._session = session or requests.Session()
         self._ids = itertools.count(1)
 
-    def _call(self, method: str, **params) -> Any:
+    def _call(self, method: str, _timeout: Optional[float] = None, **params) -> Any:
         payload = {
             "jsonrpc": "2.0",
             "id": next(self._ids),
@@ -50,10 +50,17 @@ class MopidyClient:
         }
         log.debug("Mopidy call %s params=%s", method, params)
         try:
-            response = self._session.post(self.url, json=payload, timeout=self.timeout)
+            response = self._session.post(
+                self.url, json=payload, timeout=_timeout or self.timeout
+            )
             response.raise_for_status()
             body = response.json()
         except requests.RequestException as e:
+            if isinstance(e, requests.Timeout):
+                raise MopidyError(
+                    f"Mopidy didn't answer {method} in time. A first YouTube search can "
+                    f"take a while on a Pi — try again, or raise MOPIDY_SEARCH_TIMEOUT_S."
+                ) from e
             raise MopidyError(
                 f"Couldn't reach Mopidy at {self.url} ({e}). Is the mopidy service running?"
             ) from e
@@ -140,7 +147,9 @@ class MopidyClient:
         if uri_scheme:
             kwargs["uris"] = [f"{uri_scheme}:"]
 
-        results = self._call("core.library.search", **kwargs) or []
+        results = self._call(
+            "core.library.search", _timeout=MOPIDY_SEARCH_TIMEOUT_S, **kwargs
+        ) or []
         uris: List[str] = []
         for result in results:
             for track in result.get("tracks", []) or []:

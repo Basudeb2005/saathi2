@@ -252,15 +252,38 @@ def check_openai() -> Result:
 
 
 def check_livekit() -> Result:
+    """Actually talk to the server.
+
+    Minting a token only proves three strings are present — it never
+    leaves the machine, so a typo'd URL or a blocked network still
+    reported "credentials valid" and then hung at connect time with no
+    output. Listing rooms is a real round trip.
+    """
     if not (LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET):
         return Result(FAIL, "not configured", "run: python -m saathi.setup")
-    try:
-        from saathi.device import _access_token
 
-        _access_token()
+    import asyncio
+
+    async def probe():
+        from livekit import api as lk_api
+
+        client = lk_api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        try:
+            return await asyncio.wait_for(
+                client.room.list_rooms(lk_api.ListRoomsRequest()), timeout=20
+            )
+        finally:
+            await client.aclose()
+
+    try:
+        rooms = asyncio.run(probe())
+    except asyncio.TimeoutError:
+        return Result(FAIL, f"timed out reaching {LIVEKIT_URL}", "is the URL right, and the Pi online?")
     except Exception as e:
-        return Result(FAIL, f"couldn't mint a token ({e})")
-    return Result(OK, f"credentials valid for {LIVEKIT_URL}")
+        return Result(FAIL, f"{type(e).__name__}: {str(e)[:100]}", "check LIVEKIT_URL / key / secret")
+
+    count = len(getattr(rooms, "rooms", []) or [])
+    return Result(OK, f"reachable, {count} room(s) live")
 
 
 def check_wake_models() -> Result:

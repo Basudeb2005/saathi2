@@ -169,11 +169,20 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
             log.info("Hearing %s", participant.identity)
             asyncio.create_task(_play(rtc.AudioStream(track), timer, players))
 
-    log.info("Joining room=%s as %s", room_name, DEVICE_IDENTITY)
+    log.info("Joining room=%s as %s at %s", room_name, DEVICE_IDENTITY, LIVEKIT_URL)
     try:
-        await room.connect(LIVEKIT_URL, _access_token())
+        # Bounded: an unreachable or wrong URL otherwise hangs here with
+        # no output at all, which is indistinguishable from a working
+        # session sitting quietly waiting for someone to speak.
+        await asyncio.wait_for(room.connect(LIVEKIT_URL, _access_token()), timeout=20)
+    except asyncio.TimeoutError as e:
+        raise DeviceError(
+            f"Timed out connecting to {LIVEKIT_URL}. Check the URL is right and the Pi "
+            f"can reach it — `python -m saathi.doctor` tests this."
+        ) from e
     except Exception as e:
         raise DeviceError(f"Couldn't join the room: {e}") from e
+    log.info("Connected to room=%s", room_name)
 
     @room.on("participant_connected")
     def _on_join(participant):
@@ -184,6 +193,7 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
     await room.local_participant.publish_track(
         track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
     )
+    log.info("Published the microphone")
 
     others = [p.identity for p in room.remote_participants.values()]
     if others:
@@ -195,6 +205,7 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
         )
 
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
+    log.info("Listening — say something. Session ends after %.0fs of quiet.", SESSION_IDLE_TIMEOUT_S)
     try:
         await _pump_mic(mic, source, timer, rtc)
     finally:

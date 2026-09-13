@@ -101,6 +101,9 @@ sudo tee /etc/systemd/system/mopidy-venv.service >/dev/null <<UNIT
 Description=Mopidy 4 (venv)
 After=network-online.target sound.target
 Wants=network-online.target
+# In [Unit], not [Service] — systemd ignores it here otherwise, and the
+# point is that it never gives up retrying.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -111,7 +114,6 @@ Environment=HOME=$HOME
 ExecStart=$VENV/bin/mopidy
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 SupplementaryGroups=audio
 
 [Install]
@@ -127,7 +129,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now mopidy-venv
 ok "service installed (mopidy-venv)"
 
-for _ in $(seq 1 20); do
+# Mopidy 4 takes a while to come up on a Pi — it imports yt-dlp and
+# scans media dirs before the HTTP frontend binds. 20s was not enough.
+for _ in $(seq 1 45); do
   curl -fsS -m 1 -X POST http://127.0.0.1:6680/mopidy/rpc \
     -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1 && break
   sleep 1

@@ -84,3 +84,56 @@ def test_expiry_is_inclusive_at_the_boundary():
     t = timer(c, timeout_s=12.0)
     c.advance(12.0)
     assert t.expired is True
+
+
+# ---- subprocess cleanup ------------------------------------------------
+
+class FakeProc:
+    """Stands in for an arecord/aplay Popen."""
+
+    def __init__(self, dies_on_terminate=True, already_dead=False):
+        self.dies_on_terminate = dies_on_terminate
+        self.terminated = False
+        self.killed = False
+        self._dead = already_dead
+
+    def poll(self):
+        return 0 if self._dead else None
+
+    def terminate(self):
+        self.terminated = True
+        if self.dies_on_terminate:
+            self._dead = True
+
+    def kill(self):
+        self.killed = True
+        self._dead = True
+
+    def wait(self, timeout=None):
+        import subprocess
+        if self._dead:
+            return 0
+        raise subprocess.TimeoutExpired("arecord", timeout or 0)
+
+
+def test_stop_terminates_a_live_process():
+    from saathi.wake import _stop
+    p = FakeProc()
+    _stop(p)
+    assert p.terminated and not p.killed
+
+
+def test_stop_kills_one_that_ignores_sigterm():
+    """The whole point: a survivor keeps the ALSA device open, and every
+    later attempt fails with 'Device or resource busy'."""
+    from saathi.wake import _stop
+    p = FakeProc(dies_on_terminate=False)
+    _stop(p)
+    assert p.terminated and p.killed
+
+
+def test_stop_leaves_an_already_dead_process_alone():
+    from saathi.wake import _stop
+    p = FakeProc(already_dead=True)
+    _stop(p)
+    assert not p.terminated and not p.killed

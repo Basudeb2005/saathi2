@@ -256,6 +256,28 @@ def build_engine(name: Optional[str] = None):
     raise WakeWordError(f"Unknown WAKE_ENGINE {name!r} — use 'openwakeword' or 'porcupine'")
 
 
+def _stop(proc: subprocess.Popen) -> None:
+    """Make sure arecord is actually gone.
+
+    terminate() alone is not enough: if it ignores SIGTERM or is stuck in
+    a blocking read, it keeps the ALSA device open, and the next attempt
+    fails with "Device or resource busy" — the process fighting itself
+    for a microphone it already holds.
+    """
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        log.warning("arecord ignored SIGTERM; killing it")
+        proc.kill()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            log.error("arecord would not die — the mic may stay busy")
+
+
 def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
     cmd = ["arecord", "-q", "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw"]
     if device:
@@ -289,8 +311,7 @@ def listen(engine=None, device: Optional[str] = None) -> Iterator[Detection]:
             if detection:
                 yield detection
     finally:
-        proc.terminate()
-        proc.wait(timeout=2)
+        _stop(proc)
 
 
 def main() -> None:

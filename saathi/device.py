@@ -47,6 +47,7 @@ from saathi.config import (
     WAKE_CAPTURE_DEVICE,
 )
 from saathi.logging_setup import get_logger
+from saathi.wake import _stop
 
 log = get_logger("device")
 
@@ -180,10 +181,9 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
     try:
         await _pump_mic(mic, source, timer, rtc)
     finally:
-        mic.terminate()
-        mic.wait(timeout=2)
+        _stop(mic)
         for p in players:
-            p.terminate()
+            _stop(p)
         await room.disconnect()
         log.info("Left room=%s", room_name)
 
@@ -254,9 +254,17 @@ def run_forever() -> None:
     while True:
         # `listen` owns the mic, so it is torn down before a session
         # starts and rebuilt afterwards — see the module docstring.
-        detection = None
-        for detection in listen(engine):
-            break
+        #
+        # close() explicitly rather than relying on the loop variable
+        # going out of scope: the generator's finally is what kills
+        # arecord, and leaving that to the garbage collector means the
+        # old process can still hold the device when the next one opens
+        # it, which fails as "Device or resource busy" forever after.
+        stream = listen(engine)
+        try:
+            detection = next(stream, None)
+        finally:
+            stream.close()
 
         if detection is None:
             log.warning("Wake listener stopped; retrying in 2s")

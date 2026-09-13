@@ -77,7 +77,15 @@ for section, values in {
     # alsasink, never autoaudiosink — the latter picks HDMI on a Pi and
     # you get a player that says "playing" into a screen nobody is using.
     "audio": {"output": f"alsasink device={device}" if device else "alsasink"},
-    "youtube": {"enabled": "true", "api_enabled": "false"},
+    # search_results low for the same reason the client asks for few:
+    # yt-dlp resolves metadata for every hit before returning any, so
+    # this number is most of the wait before music starts.
+    "youtube": {
+        "enabled": "true",
+        "api_enabled": "false",
+        "search_results": "5",
+        "autoplay_enabled": "false",
+    },
 }.items():
     if not c.has_section(section):
         c.add_section(section)

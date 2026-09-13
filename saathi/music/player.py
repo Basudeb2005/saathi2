@@ -23,7 +23,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Optional
 
-from saathi.config import MUSIC_DUCK_VOLUME, MUSIC_NORMAL_VOLUME
+from saathi.config import MUSIC_DUCK_VOLUME, MUSIC_NORMAL_VOLUME, MUSIC_SONG_RESULTS
 from saathi.logging_setup import get_logger
 from saathi.music.mopidy import MopidyClient, MopidyError
 from saathi.music.radio import RadioBrowser, RadioError
@@ -63,7 +63,9 @@ class MusicPlayer:
 
     def _play_song(self, query: str) -> str:
         try:
-            uris = self.mopidy.search_tracks(query, uri_scheme="youtube", limit=20)
+            uris = self.mopidy.search_tracks(
+                query, uri_scheme="youtube", limit=MUSIC_SONG_RESULTS
+            )
         except MopidyError as e:
             raise MusicError(str(e)) from e
 

@@ -87,6 +87,11 @@ MOPIDY_TIMEOUT_S = float(os.getenv("MOPIDY_TIMEOUT_S", "10"))
 # ten seconds for the first one, and a timeout there reads to the user
 # as "Mopidy is down" when it is simply still thinking.
 MOPIDY_SEARCH_TIMEOUT_S = float(os.getenv("MOPIDY_SEARCH_TIMEOUT_S", "75"))
+# How many song results to ask for. Small on purpose: yt-dlp resolves
+# metadata for every result before returning any of them, so asking for
+# twenty costs roughly four times the wait for a first track that is
+# almost always the right one anyway.
+MUSIC_SONG_RESULTS = int(os.getenv("MUSIC_SONG_RESULTS", "5"))
 
 # Volume the music ducks to while Saathi is speaking or on a call, as a
 # percentage of normal. Music and voice share one speaker; without this

@@ -71,6 +71,7 @@ a phone number spoken aloud — if they ask for someone not on the list, say so 
 "old Hindi songs", "the news"), and source="song" for a specific named track or artist. \
 Use "auto" if you genuinely can't tell.
 - If a message is garbled, empty, or you genuinely cannot tell what was said, say one short "Sorry, I didn't catch that" and stop. Do not guess at it, and do not answer a question the person didn't ask.
+- Looking up a specific song takes several seconds. Say something short first — "let me find it" — then call the tool. Silence while you search reads as not having heard them, and they start repeating themselves.
 - You are talking, not writing. Keep replies to one or two short sentences. No lists, no \
 markdown, no emoji.
 - The person may be elderly. Speak plainly, don't rush, and never use jargon.
@@ -109,7 +110,11 @@ class Saathi(Agent):
     async def play_music(self, context: RunContext, query: str, source: str = "auto") -> str:
         """Play music. `query` is what they asked for, e.g. "old Hindi songs" or
         "Lata Mangeshkar". `source` is "station" for a genre/mood/language, "song"
-        for a specific named track or artist, or "auto" when unsure."""
+        for a specific named track or artist, or "auto" when unsure.
+
+        Prefer "station" when either would do — a station starts in about a second,
+        a song lookup takes several. Only use "song" when they named a specific
+        track or artist and a station genuinely wouldn't satisfy them."""
         try:
             return self.music.play(query, source=source)
         except MusicError as e:

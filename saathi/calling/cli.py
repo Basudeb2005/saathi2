@@ -285,7 +285,7 @@ def cmd_trunks(args) -> int:
     away at the far end.
     """
     async def run(client, lk_api):
-        return await client.sip.list_sip_outbound_trunk(
+        return await client.sip.list_outbound_trunk(
             lk_api.ListSIPOutboundTrunkRequest()
         )
 
@@ -329,7 +329,7 @@ def cmd_fix_encryption(args) -> int:
     async def run(client, lk_api):
         from livekit.protocol.sip import SIPMediaEncryption
 
-        listed = await client.sip.list_sip_outbound_trunk(lk_api.ListSIPOutboundTrunkRequest())
+        listed = await client.sip.list_outbound_trunk(lk_api.ListSIPOutboundTrunkRequest())
         existing = next((t for t in (getattr(listed, "items", []) or [])
                          if t.sip_trunk_id == target), None)
         if existing is None:
@@ -344,7 +344,7 @@ def cmd_fix_encryption(args) -> int:
         updated = lk_api.SIPOutboundTrunkInfo()
         updated.CopyFrom(existing)
         updated.media_encryption = SIPMediaEncryption.SIP_MEDIA_ENCRYPT_ALLOW
-        return await client.sip.update_sip_outbound_trunk(target, updated), True
+        return await client.sip.update_outbound_trunk(target, updated), True
 
     try:
         trunk, changed = asyncio.run(_with_api(run))

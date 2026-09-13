@@ -392,8 +392,23 @@ def main() -> int:
     else:
         print(f"{GREEN}Everything checks out.{RESET}")
 
-    print(f"\nStart it with:  {BOLD}sudo systemctl start saathi{RESET}")
-    print(f"{DIM}or in the foreground: ./venv/bin/python -m saathi.device{RESET}\n")
+    # Templated units, and there are two — the brain and the box. Naming
+    # the wrong one sends people to "Unit saathi.service not found", which
+    # reads as a broken install rather than a typo in this message.
+    import getpass
+
+    user = getpass.getuser()
+    installed = os.path.exists("/etc/systemd/system/saathi@.service")
+
+    print(f"\nRun it in the foreground first, where you can see it work:")
+    print(f"  {BOLD}./venv/bin/python -m saathi.agent dev{RESET}   {DIM}(terminal 1){RESET}")
+    print(f"  {BOLD}./venv/bin/python -m saathi.device{RESET}      {DIM}(terminal 2){RESET}")
+
+    if installed:
+        print(f"\nOr as services:  {BOLD}sudo systemctl start saathi-agent@{user} saathi@{user}{RESET}")
+        print(f"{DIM}  watch it:      journalctl -fu saathi@{user}{RESET}\n")
+    else:
+        print(f"\nTo run on boot:  {BOLD}bash systemd/install.sh{RESET}\n")
     return 0
 
 

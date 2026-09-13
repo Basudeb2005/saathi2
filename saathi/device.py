@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from saathi.config import (
+    AUDIO_OUTPUT_DEVICE,
     DEVICE_FRAME_MS,
     DEVICE_IDENTITY,
     DEVICE_SAMPLE_RATE,
@@ -121,6 +122,9 @@ def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
 
 def _spawn_aplay(sample_rate: int, channels: int) -> subprocess.Popen:
     cmd = ["aplay", "-q", "-f", "S16_LE", "-r", str(sample_rate), "-c", str(channels)]
+    if AUDIO_OUTPUT_DEVICE:
+        cmd += ["-D", AUDIO_OUTPUT_DEVICE]
+    log.info("Playback: %s", " ".join(cmd))
     try:
         return subprocess.Popen(cmd, stdin=subprocess.PIPE)
     except FileNotFoundError as e:
@@ -171,11 +175,24 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
     except Exception as e:
         raise DeviceError(f"Couldn't join the room: {e}") from e
 
+    @room.on("participant_connected")
+    def _on_join(participant):
+        log.info("%s joined the room", participant.identity)
+
     source = rtc.AudioSource(DEVICE_SAMPLE_RATE, 1)
     track = rtc.LocalAudioTrack.create_audio_track("mic", source)
     await room.local_participant.publish_track(
         track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
     )
+
+    others = [p.identity for p in room.remote_participants.values()]
+    if others:
+        log.info("Already in the room: %s", ", ".join(others))
+    else:
+        log.warning(
+            "Nobody else in the room yet — if the agent never joins, check that "
+            "`python -m saathi.agent dev` is running and connected to the same project"
+        )
 
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
     try:

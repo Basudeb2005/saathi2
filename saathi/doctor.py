@@ -168,6 +168,34 @@ def check_mic_hears() -> Result:
     return Result(OK, f"mic hears sound (rms {level})")
 
 
+def check_speaker() -> Result:
+    """Play a short tone and make sure aplay accepts it.
+
+    This can't verify you actually *heard* anything — no loopback — but it
+    does catch the common case of playback pointing at a device that
+    isn't there, which otherwise presents as the agent talking to itself.
+    """
+    from saathi.config import AUDIO_OUTPUT_DEVICE
+
+    cmd = ["speaker-test", "-t", "sine", "-f", "440", "-l", "1", "-c", "2"]
+    if AUDIO_OUTPUT_DEVICE:
+        cmd += ["-D", AUDIO_OUTPUT_DEVICE]
+    try:
+        done = subprocess.run(cmd, capture_output=True, timeout=20)
+    except FileNotFoundError:
+        return Result(WARN, "speaker-test not installed", "sudo apt install alsa-utils")
+    except Exception as e:
+        return Result(WARN, f"couldn't test playback ({e})")
+
+    where = AUDIO_OUTPUT_DEVICE or "the ALSA default"
+    if done.returncode != 0:
+        return Result(
+            FAIL, f"playback failed on {where}",
+            "list outputs with `aplay -l`, then set AUDIO_OUTPUT_DEVICE=plughw:N,0 in .env",
+        )
+    return Result(OK, f"played a tone on {where}")
+
+
 def check_mopidy() -> Result:
     import requests
 
@@ -268,6 +296,7 @@ CHECKS: List[Check] = [
     Check("Audio tools", check_tools),
     Check("Microphone present", check_mic_exists),
     Check("Microphone hears", check_mic_hears),
+    Check("Speaker", check_speaker),
     Check("OpenAI", check_openai),
     Check("LiveKit", check_livekit),
     Check("Mopidy", check_mopidy),

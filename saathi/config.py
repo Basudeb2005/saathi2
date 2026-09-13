@@ -148,3 +148,8 @@ SESSION_MAX_S = float(os.getenv("SESSION_MAX_S", "600"))
 # Above this RMS (16-bit samples) someone is talking, so the idle timer
 # should not be counting down.
 SPEECH_RMS_THRESHOLD = int(os.getenv("SPEECH_RMS_THRESHOLD", "300"))
+
+# ALSA playback device, e.g. "plughw:0,0" for the Pi's headphone jack or
+# "plughw:2,0" for a USB speaker. Unset uses the ALSA default — which, as
+# with capture, is routinely not the device you actually plugged in.
+AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE")

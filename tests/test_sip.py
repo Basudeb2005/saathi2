@@ -33,3 +33,27 @@ def test_missing_pstn_trunk_names_the_env_var(monkeypatch):
 def test_identity_is_stable_per_contact():
     assert sip._identity_for("daughter") == sip._identity_for("daughter")
     assert sip._identity_for("daughter") != sip._identity_for("son")
+
+
+# ---- what LiveKit's sip_call_to actually wants --------------------------
+
+def test_sip_uri_is_reduced_to_the_user_part():
+    """LiveKit rejects a full URI outright: the domain comes from the
+    trunk, so it wants 'priya', not 'sip:priya@sip.linphone.org'."""
+    contact = Contact(transport="sip", address="sip:priya@sip.linphone.org")
+    assert sip.sip_call_to(contact) == "priya"
+
+
+def test_sips_scheme_is_handled_too():
+    contact = Contact(transport="sip", address="sips:priya@example.com")
+    assert sip.sip_call_to(contact) == "priya"
+
+
+def test_a_bare_user_is_left_alone():
+    contact = Contact(transport="sip", address="sip:priya@x.com")
+    assert "@" not in sip.sip_call_to(contact)
+
+
+def test_pstn_numbers_pass_through_untouched():
+    contact = Contact(transport="pstn", address="+6585496423")
+    assert sip.sip_call_to(contact) == "+6585496423"

@@ -72,6 +72,28 @@ def trunk_for(contact: Contact) -> str:
     return LIVEKIT_PSTN_TRUNK_ID
 
 
+def sip_call_to(contact: Contact) -> str:
+    """What LiveKit's sip_call_to field actually wants.
+
+    Not a URI. The domain comes from the trunk's own address, so passing
+    "sip:priya@sip.linphone.org" is rejected outright — it wants "priya".
+    Contacts still store the full address because that is the thing a
+    person can read, verify and paste from their phone; the narrowing
+    happens here, at the boundary that cares.
+
+    A PSTN number goes through untouched.
+    """
+    if contact.transport == "pstn":
+        return contact.address
+
+    address = contact.address
+    for scheme in ("sips:", "sip:"):
+        if address.startswith(scheme):
+            address = address[len(scheme):]
+            break
+    return address.split("@", 1)[0]
+
+
 def _identity_for(name: str) -> str:
     """Stable per-contact identity, so a second call to the same person
     replaces the first rather than putting two of them in the room."""
@@ -93,6 +115,9 @@ async def place_call(
     """
     trunk_id = trunk_for(contact)
 
+    # Close only what we opened — an injected client belongs to the caller.
+    ours = api is None
+
     if api is None:
         if not (LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET):
             raise CallError(
@@ -108,21 +133,29 @@ async def place_call(
     identity = _identity_for(name)
     request = lk_api.CreateSIPParticipantRequest(
         sip_trunk_id=trunk_id,
-        sip_call_to=contact.address,
+        sip_call_to=sip_call_to(contact),
         room_name=room_name,
         participant_identity=identity,
         participant_name=contact.label or name,
     )
 
     log.info(
-        "Placing call contact=%s transport=%s trunk=%s room=%s",
-        name, contact.transport, trunk_id, room_name,
+        "Placing call contact=%s to=%s transport=%s trunk=%s room=%s",
+        name, request.sip_call_to, contact.transport, trunk_id, room_name,
     )
     try:
         await api.sip.create_sip_participant(request)
     except Exception as e:
         log.exception("Trunk rejected the call to contact=%s", name)
-        raise CallError(f"I couldn't get through to {contact.label or name}.") from e
+        raise CallError(
+            f"I couldn't get through to {contact.label or name}. ({type(e).__name__}: {e})"
+        ) from e
+    finally:
+        if ours:
+            try:
+                await api.aclose()
+            except Exception:
+                pass
 
     log.info("Call to contact=%s dialling as identity=%s", name, identity)
     return CallResult(contact=name, participant_identity=identity, free=contact.is_free)

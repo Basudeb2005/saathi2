@@ -182,3 +182,23 @@ def test_silence_from_the_far_end_does_not_count_as_speaking():
     those as the agent talking mutes our mic permanently."""
     assert is_speech(pcm(0)) is False
     assert is_speech(pcm(3)) is False
+
+
+def test_extend_resets_the_hard_cap_too():
+    """Music holding the session open is deliberate, not stuck — and an
+    album is longer than the ten-minute cap."""
+    c = Clock()
+    t = timer(c, max_s=600.0)
+    for _ in range(700):
+        c.advance(1.0)
+        t.extend()
+    assert t.expired is False
+
+
+def test_poke_alone_does_not_reset_the_cap():
+    c = Clock()
+    t = timer(c, max_s=600.0)
+    for _ in range(700):
+        c.advance(1.0)
+        t.poke()
+    assert t.expired is True

@@ -177,6 +177,20 @@ SESSION_MAX_S = float(os.getenv("SESSION_MAX_S", "600"))
 # should not be counting down.
 SPEECH_RMS_THRESHOLD = int(os.getenv("SPEECH_RMS_THRESHOLD", "300"))
 
+# Stay in the session while music is playing, so "stop" needs no wake
+# word. Without this the session ends twelve seconds after you last
+# spoke, the music carries on, and then the wake word has to compete
+# with a speaker playing music into the microphone — which, with no echo
+# cancellation, it loses. The cost is LiveKit minutes for as long as the
+# music runs, so a long album will spend the free tier.
+MUSIC_HOLDS_SESSION = os.getenv("MUSIC_HOLDS_SESSION", "true").lower() in ("1", "true", "yes")
+# How often to ask Mopidy whether it's still playing. Every frame would
+# be 50 RPC calls a second for something that changes every few minutes.
+MUSIC_CHECK_INTERVAL_S = float(os.getenv("MUSIC_CHECK_INTERVAL_S", "4"))
+# Music is ducked for the whole session, not just while Saathi speaks:
+# the microphone has to hear you over it, and at full volume it can't.
+MUSIC_SESSION_VOLUME = int(os.getenv("MUSIC_SESSION_VOLUME", "35"))
+
 # ALSA playback device, e.g. "plughw:0,0" for the Pi's headphone jack or
 # "plughw:2,0" for a USB speaker. Unset uses the ALSA default — which, as
 # with capture, is routinely not the device you actually plugged in.

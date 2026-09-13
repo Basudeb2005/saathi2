@@ -38,6 +38,9 @@ from saathi.config import (
     AUDIO_OUTPUT_DEVICE,
     HALF_DUPLEX,
     HALF_DUPLEX_HANGOVER_S,
+    MUSIC_CHECK_INTERVAL_S,
+    MUSIC_HOLDS_SESSION,
+    MUSIC_SESSION_VOLUME,
     VOICE_TRIGGER_MS,
     VOICE_TRIGGER_RMS,
     WAKE_MODE,
@@ -143,6 +146,18 @@ class IdleTimer:
 
     def poke(self) -> None:
         self._last_activity = self._clock()
+
+    def extend(self) -> None:
+        """Reset the hard cap too, not just the idle countdown.
+
+        The cap exists to stop a stuck session holding the line open. A
+        session held open deliberately — music playing, so "stop" needs
+        no wake word — is not stuck, and an album is longer than ten
+        minutes.
+        """
+        now = self._clock()
+        self._started = now
+        self._last_activity = now
 
     @property
     def expired(self) -> bool:
@@ -273,11 +288,17 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
             "`python -m saathi.agent dev` is running and connected to the same project"
         )
 
+    # Ducked for the whole session, not only while Saathi speaks: at full
+    # volume the microphone cannot hear you over the speaker, and with no
+    # echo cancellation there is nothing else to fall back on.
+    previous_volume = await asyncio.to_thread(_duck_music)
+
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
     log.info("Listening — say something. Session ends after %.0fs of quiet.", SESSION_IDLE_TIMEOUT_S)
     try:
         await _pump_mic(mic, source, timer, rtc, far_end)
     finally:
+        await asyncio.to_thread(_restore_music, previous_volume)
         _stop(mic)
         for task in mixer.values():
             task.cancel()
@@ -285,6 +306,50 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
             speaker["s"].close()
         await room.disconnect()
         log.info("Left room=%s", room_name)
+
+
+def _duck_music() -> Optional[int]:
+    """Turn music down for the session. Returns the previous volume, or
+    None if there was nothing to turn down."""
+    try:
+        from saathi.music.mopidy import MopidyClient
+
+        client = MopidyClient()
+        if client.state() != "playing":
+            return None
+        previous = client.get_volume()
+        client.set_volume(MUSIC_SESSION_VOLUME)
+        log.info("Ducked music %s -> %s for the session", previous, MUSIC_SESSION_VOLUME)
+        return previous
+    except Exception as e:
+        log.info("Couldn't duck music: %s", e)
+        return None
+
+
+def _restore_music(previous: Optional[int]) -> None:
+    """Put it back where the user had it, not at a constant — someone who
+    turned it down stays turned down."""
+    if previous is None:
+        return
+    try:
+        from saathi.music.mopidy import MopidyClient
+
+        MopidyClient().set_volume(previous)
+        log.info("Restored music volume to %s", previous)
+    except Exception as e:
+        log.info("Couldn't restore music volume: %s", e)
+
+
+def _music_is_playing() -> bool:
+    """Best-effort. Never let a music check end a conversation: if Mopidy
+    can't be reached, the honest answer is 'probably not playing', not a
+    crash mid-sentence."""
+    try:
+        from saathi.music.mopidy import MopidyClient
+
+        return MopidyClient().state() == "playing"
+    except Exception:
+        return False
 
 
 async def _pump_mic(mic, source, timer: IdleTimer, rtc, far_end: "FarEnd") -> None:
@@ -298,8 +363,22 @@ async def _pump_mic(mic, source, timer: IdleTimer, rtc, far_end: "FarEnd") -> No
     # Long enough that a healthy mic never trips it (a frame is 20ms),
     # short enough that a wedged one doesn't hold the session open.
     read_timeout = max(2.0, SESSION_IDLE_TIMEOUT_S / 4)
+    next_music_check = 0.0
+    music_playing = False
 
-    while not timer.expired:
+    while True:
+        if timer.expired:
+            # Music keeps the session open so "stop" works without the
+            # wake word — which it wouldn't, over a speaker playing music
+            # into the microphone.
+            now = time.monotonic()
+            if MUSIC_HOLDS_SESSION and now >= next_music_check:
+                music_playing = await asyncio.to_thread(_music_is_playing)
+                next_music_check = now + MUSIC_CHECK_INTERVAL_S
+            if not (MUSIC_HOLDS_SESSION and music_playing):
+                return
+            timer.extend()
+
         try:
             pcm = await asyncio.wait_for(
                 loop.run_in_executor(None, mic.stdout.read, FRAME_BYTES),

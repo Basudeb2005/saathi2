@@ -109,6 +109,19 @@ config["http"]["enabled"] = "true"
 config["http"]["hostname"] = "127.0.0.1"
 config["http"]["port"] = "6680"
 
+# Mopidy has its own audio output, entirely separate from the agent's
+# aplay. Left alone it uses GStreamer's autoaudiosink, which on a Pi
+# picks whatever it feels like — usually HDMI — so Mopidy reports
+# "playing" while the speaker stays silent. Pin it to ALSA.
+import os as _os
+
+device = _os.environ.get("MOPIDY_ALSA_DEVICE", "")
+if not config.has_section("audio"):
+    config.add_section("audio")
+config["audio"]["output"] = (
+    f"alsasink device={device}" if device else "alsasink"
+)
+
 # Only declare [youtube] when the extension is actually installed —
 # Mopidy refuses to start on config for an extension it doesn't have.
 try:

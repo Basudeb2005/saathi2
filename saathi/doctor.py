@@ -212,7 +212,27 @@ def check_mopidy() -> Result:
             FAIL, f"unreachable at {MOPIDY_RPC_URL} ({type(e).__name__})",
             "sudo systemctl start mopidy — and enable [http] in /etc/mopidy/mopidy.conf",
         )
-    return Result(OK, f"Mopidy {version}")
+    # Reporting "playing" is not the same as being audible: Mopidy has
+    # its own GStreamer output, and an unconfigured one goes to HDMI
+    # while the speaker sits silent.
+    sink = ""
+    try:
+        conf = subprocess.run(
+            ["mopidyctl", "config"], capture_output=True, text=True, timeout=20
+        ).stdout
+        for line in conf.splitlines():
+            if line.strip().startswith("output ="):
+                sink = line.split("=", 1)[1].strip()
+                break
+    except Exception:
+        pass
+
+    if sink and "autoaudiosink" in sink:
+        return Result(
+            WARN, f"Mopidy {version}, output={sink}",
+            "autoaudiosink usually picks HDMI — set [audio] output = alsasink in /etc/mopidy/mopidy.conf",
+        )
+    return Result(OK, f"Mopidy {version}" + (f", output={sink}" if sink else ""))
 
 
 def check_radio() -> Result:

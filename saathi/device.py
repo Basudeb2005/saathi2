@@ -224,8 +224,24 @@ async def _pump_mic(mic, source, timer: IdleTimer, rtc) -> None:
     """
     loop = asyncio.get_running_loop()
 
+    # Long enough that a healthy mic never trips it (a frame is 20ms),
+    # short enough that a wedged one doesn't hold the session open.
+    read_timeout = max(2.0, SESSION_IDLE_TIMEOUT_S / 4)
+
     while not timer.expired:
-        pcm = await loop.run_in_executor(None, mic.stdout.read, FRAME_BYTES)
+        try:
+            pcm = await asyncio.wait_for(
+                loop.run_in_executor(None, mic.stdout.read, FRAME_BYTES),
+                timeout=read_timeout,
+            )
+        except asyncio.TimeoutError:
+            # arecord is alive but producing nothing — usually the device
+            # is held by something else. Without this the read blocks
+            # forever, timer.expired is never re-checked, and the session
+            # hangs with no output rather than ending and cleaning up.
+            log.warning("Mic produced nothing for %.0fs — giving up on this session", read_timeout)
+            return
+
         if not pcm or len(pcm) < FRAME_BYTES:
             log.warning("Mic stream ended")
             return

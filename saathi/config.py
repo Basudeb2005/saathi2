@@ -82,6 +82,17 @@ MUSIC_NORMAL_VOLUME = int(os.getenv("MUSIC_NORMAL_VOLUME", "70"))
 # source because it is the only one with no auth and no terms-of-service
 # question hanging over it.
 RADIO_BROWSER_URL = os.getenv("RADIO_BROWSER_URL", "https://de1.api.radio-browser.info")
+# Volunteer-run mirrors; any one of them drops connections occasionally,
+# so the client falls through the list rather than failing the request.
+RADIO_BROWSER_MIRRORS = [
+    h.strip() for h in os.getenv(
+        "RADIO_BROWSER_MIRRORS",
+        "https://de1.api.radio-browser.info,"
+        "https://de2.api.radio-browser.info,"
+        "https://nl1.api.radio-browser.info,"
+        "https://at1.api.radio-browser.info",
+    ).split(",") if h.strip()
+]
 RADIO_BROWSER_UA = os.getenv("RADIO_BROWSER_UA", "saathi/2.0")
 RADIO_TIMEOUT_S = float(os.getenv("RADIO_TIMEOUT_S", "10"))
 

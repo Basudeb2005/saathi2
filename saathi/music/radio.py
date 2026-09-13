@@ -18,7 +18,12 @@ from typing import List, Optional
 
 import requests
 
-from saathi.config import RADIO_BROWSER_UA, RADIO_BROWSER_URL, RADIO_TIMEOUT_S
+from saathi.config import (
+    RADIO_BROWSER_MIRRORS,
+    RADIO_BROWSER_UA,
+    RADIO_BROWSER_URL,
+    RADIO_TIMEOUT_S,
+)
 from saathi.logging_setup import get_logger
 
 log = get_logger("music.radio")
@@ -58,25 +63,46 @@ class RadioBrowser:
         self.timeout = timeout
         self._session = session or requests.Session()
 
-    def _get(self, path: str, **params) -> list:
-        url = f"{self.base_url}{path}"
-        try:
-            response = self._session.get(
-                url,
-                params=params,
-                timeout=self.timeout,
-                headers={"User-Agent": RADIO_BROWSER_UA},
-            )
-            response.raise_for_status()
-            body = response.json()
-        except requests.RequestException as e:
-            raise RadioError(f"Couldn't reach Radio Browser at {url} ({e})") from e
-        except ValueError as e:
-            raise RadioError("Radio Browser returned a non-JSON response") from e
+    def _hosts(self) -> List[str]:
+        """The configured mirror first, then the others.
 
-        if not isinstance(body, list):
-            raise RadioError("Radio Browser returned an unexpected response shape")
-        return body
+        Radio Browser is a handful of volunteer-run mirrors, and any one
+        of them drops connections from time to time. Falling over to the
+        next is the difference between "no music today" and a pause
+        nobody notices.
+        """
+        hosts = [self.base_url]
+        hosts += [h for h in RADIO_BROWSER_MIRRORS if h != self.base_url]
+        return hosts
+
+    def _get(self, path: str, **params) -> list:
+        last_error = None
+
+        for host in self._hosts():
+            url = f"{host.rstrip('/')}{path}"
+            try:
+                response = self._session.get(
+                    url,
+                    params=params,
+                    timeout=self.timeout,
+                    headers={"User-Agent": RADIO_BROWSER_UA},
+                )
+                response.raise_for_status()
+                body = response.json()
+            except requests.RequestException as e:
+                log.info("Radio mirror %s failed (%s) — trying the next", host, e)
+                last_error = e
+                continue
+            except ValueError as e:
+                last_error = e
+                continue
+
+            if not isinstance(body, list):
+                last_error = RadioError("unexpected response shape")
+                continue
+            return body
+
+        raise RadioError(f"No Radio Browser mirror responded (last error: {last_error})")
 
     def search(self, query: str, limit: int = 10) -> List[Station]:
         """Find working stations matching `query`, most-listened first.

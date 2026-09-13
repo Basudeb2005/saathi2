@@ -54,7 +54,11 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 STT_PROVIDER = os.getenv("STT_PROVIDER", "openai").lower()    # openai | deepgram
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "openai").lower()    # openai | elevenlabs
 
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# gpt-4o rather than gpt-4o-mini. Mini loses the thread on anything
+# compound — "put on something cheerful and tell me what time my
+# daughter called" — and for a companion, understanding beats the few
+# cents a day the smaller model saves.
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
 # gpt-4o-transcribe over whisper-1: markedly better on accented English
 # and on Indian languages, which is most of what this box will hear.
 OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-transcribe")

@@ -311,9 +311,18 @@ async def _play(stream, timer: IdleTimer, players: list, far_end: "FarEnd") -> N
                 players.append(player)
                 log.info("Playing %dHz %dch", frame.sample_rate, frame.num_channels)
 
-            timer.poke()
-            far_end.heard()
-            player.stdin.write(bytes(frame.data))
+            pcm = bytes(frame.data)
+
+            # Only sound counts. LiveKit delivers frames continuously
+            # while the track is subscribed, silence included — so poking
+            # on every frame kept the far end "speaking" forever, which
+            # left our mic muted forever and meant it never heard the
+            # second thing anyone said.
+            if is_speech(pcm):
+                timer.poke()
+                far_end.heard()
+
+            player.stdin.write(pcm)
             player.stdin.flush()
     except Exception as e:
         log.info("Playback stream ended: %s", e)

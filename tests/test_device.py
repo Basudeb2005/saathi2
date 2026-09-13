@@ -175,3 +175,10 @@ def test_far_end_stays_speaking_across_a_gap_between_frames():
     f.heard()
     c.advance(0.3)
     assert f.speaking is True
+
+
+def test_silence_from_the_far_end_does_not_count_as_speaking():
+    """LiveKit streams frames continuously, silence included. Treating
+    those as the agent talking mutes our mic permanently."""
+    assert is_speech(pcm(0)) is False
+    assert is_speech(pcm(3)) is False

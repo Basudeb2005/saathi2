@@ -133,14 +133,25 @@ class OpenWakeWordEngine:
             return
 
         try:
-            import openwakeword
+            # `openwakeword.utils` must be imported explicitly: some
+            # versions don't pull the submodule in with the package, so
+            # `openwakeword.utils.download_models()` after a plain
+            # `import openwakeword` fails with "no attribute 'utils'"
+            # on exactly the versions where it matters.
+            from openwakeword import utils as oww_utils
             from openwakeword.model import Model
         except ImportError as e:
             raise WakeWordError("openwakeword isn't installed — pip install openwakeword") from e
 
-        # Idempotent, and a no-op once they're cached.
-        log.info("Ensuring pretrained wake models are downloaded")
-        openwakeword.utils.download_models()
+        # Idempotent, and a no-op once they're cached. Not fatal: the
+        # models may already be on disk from a previous run, and failing
+        # the whole engine over a download that wasn't needed would be
+        # worse than letting Model() report a genuinely missing file.
+        try:
+            log.info("Ensuring pretrained wake models are downloaded")
+            oww_utils.download_models()
+        except Exception as e:
+            log.warning("Couldn't download wake models (%s) — trying what's on disk", e)
 
         try:
             self.model = Model(wakeword_models=list(self.words), inference_framework="onnx")

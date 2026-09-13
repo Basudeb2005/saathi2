@@ -70,6 +70,53 @@ ok "python dependencies"
 
 [ -f contacts.json ] || cp contacts.json.example contacts.json
 
+# Music-by-name. Best-effort on purpose: Mopidy-YouTube tracks a moving
+# target and breaks periodically, and radio — which needs nothing — is
+# the stable floor. A failure here must not fail the install.
+if command -v mopidy >/dev/null 2>&1; then
+  sudo pip3 install --break-system-packages -q Mopidy-YouTube 2>/dev/null \
+    && ok "mopidy-youtube (songs by name)" \
+    || warn "mopidy-youtube didn't install — radio still works, songs by name won't"
+fi
+
+# --- mopidy ------------------------------------------------------------
+# Installing the package is not enough: the HTTP interface we drive it
+# through is off by default, and the service is not enabled. Skipping
+# this is why "music never plays" with Mopidy sitting right there.
+MOPIDY_CONF=/etc/mopidy/mopidy.conf
+if command -v mopidy >/dev/null 2>&1; then
+  if ! sudo grep -q "# --- saathi ---" "$MOPIDY_CONF" 2>/dev/null; then
+    sudo cp "$MOPIDY_CONF" "$MOPIDY_CONF.bak.$(date +%s)" 2>/dev/null || true
+    sudo tee -a "$MOPIDY_CONF" >/dev/null <<'CONF'
+
+# --- saathi ---
+# Saathi drives Mopidy over JSON-RPC on this port. Bound to localhost:
+# the API has no authentication, so it must not be reachable off-box.
+[http]
+enabled = true
+hostname = 127.0.0.1
+port = 6680
+
+[youtube]
+enabled = true
+CONF
+    ok "configured mopidy"
+  fi
+  sudo systemctl enable --now mopidy >/dev/null 2>&1 || warn "couldn't start mopidy"
+  # Give it a moment before the doctor pokes its RPC port.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -fsS -m 1 -X POST http://localhost:6680/mopidy/rpc \
+      -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1 && break
+    sleep 1
+  done
+  if curl -fsS -m 2 -X POST http://localhost:6680/mopidy/rpc \
+      -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1; then
+    ok "mopidy responding"
+  else
+    warn "mopidy not responding yet — check: journalctl -u mopidy -n 30"
+  fi
+fi
+
 # --- mic check ---------------------------------------------------------
 # Worth failing loudly on: no capture device is the single most common
 # reason everything else appears broken later.

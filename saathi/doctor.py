@@ -95,26 +95,67 @@ def check_mic_exists() -> Result:
     return Result(OK, f"{len(cards)} capture device(s)")
 
 
+def _record(device: Optional[str], seconds: int = 1) -> bytes:
+    cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
+           "-d", str(seconds), "-t", "raw"]
+    if device:
+        cmd += ["-D", device]
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=15 + seconds).stdout
+    except Exception:
+        return b""
+
+
+def _capture_cards() -> List[int]:
+    """Card numbers from `arecord -l`, e.g. 'card 3: Device [USB...]'."""
+    try:
+        out = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return []
+    cards = []
+    for line in out.splitlines():
+        if line.startswith("card "):
+            try:
+                cards.append(int(line.split()[1].rstrip(":")))
+            except (IndexError, ValueError):
+                continue
+    return cards
+
+
 def check_mic_hears() -> Result:
     """Record a second and look at the level.
 
     A mic that enumerates but returns silence is the single most
     demoralising failure in this project — everything looks configured and
     nothing works — so it gets its own check rather than being assumed.
+
+    When the default device gives nothing, try each card in turn instead
+    of telling someone to go read `arecord -l` themselves: ALSA's
+    "default" is routinely not the USB mic, and the fix is a device
+    string we can work out here and hand over ready to paste.
     """
     import audioop
 
-    cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-d", "1", "-t", "raw"]
-    if WAKE_CAPTURE_DEVICE:
-        cmd += ["-D", WAKE_CAPTURE_DEVICE]
+    pcm = _record(WAKE_CAPTURE_DEVICE)
 
-    try:
-        pcm = subprocess.run(cmd, capture_output=True, timeout=15).stdout
-    except Exception as e:
-        return Result(FAIL, f"recording failed ({e})", "check WAKE_CAPTURE_DEVICE")
+    if not pcm or audioop.rms(pcm, 2) < 20:
+        for card in _capture_cards():
+            candidate = f"plughw:{card},0"
+            if candidate == WAKE_CAPTURE_DEVICE:
+                continue
+            probe = _record(candidate)
+            if probe and audioop.rms(probe, 2) >= 20:
+                return Result(
+                    FAIL,
+                    f"default device is silent, but {candidate} works",
+                    f"python -m saathi.setup, or add WAKE_CAPTURE_DEVICE={candidate} to .env",
+                )
 
     if not pcm:
-        return Result(FAIL, "recorded nothing", "wrong device? try: arecord -l, then set WAKE_CAPTURE_DEVICE")
+        return Result(
+            FAIL, "recorded nothing on any device",
+            "is the mic plugged in? check `arecord -l`, and `alsamixer` F4 -> raise Capture",
+        )
 
     level = audioop.rms(pcm, 2)
     if level < 20:

@@ -44,3 +44,20 @@ def get_logger(name: str) -> logging.Logger:
         _configured = True
 
     return root.getChild(name)
+
+
+def quiet_console() -> None:
+    """Drop the console handler to warnings only, keeping the log file at
+    full detail.
+
+    Interactive commands print their own, better-worded output; an INFO
+    line about loading contacts.json interleaved with a setup prompt is
+    just noise. The file still records everything, which is what you
+    actually want when something failed an hour ago.
+    """
+    get_logger("")  # ensure handlers exist
+    for handler in logging.getLogger("saathi").handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, RotatingFileHandler
+        ):
+            handler.setLevel(logging.WARNING)

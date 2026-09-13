@@ -57,6 +57,7 @@ saathi/
     player.py        "play me something" -> something audible
   calling/
     sip.py           add a SIP participant to the room
+    cli.py           guided calling setup: guide / trunk / contacts / test
   wake.py            on-device wake word (openWakeWord or Porcupine)
   device.py          the Pi in its own room: mic in, speaker out
   doctor.py          check all six moving parts before blaming the code
@@ -175,10 +176,26 @@ Then:
 ./venv/bin/python -m saathi.device     # then talk to it
 ```
 
-Also needed, separately: **Mopidy** on the same Pi for music, and — for
-calling — a free [Linphone](https://linphone.org) SIP account per family
-member plus a LiveKit outbound trunk. SETUP.md §5 covers the whole chain,
-including the step most likely to fail.
+Calling is set up separately, whenever you're ready:
+
+```bash
+./venv/bin/python -m saathi.calling.cli guide
+```
+
+Also needed: **Mopidy** on the same Pi for music.
+
+### Re-running setup
+
+Nothing is one-shot. Every command below is safe to run again:
+
+| | |
+|---|---|
+| `bash setup.sh` | the whole install; skips what's done |
+| `python -m saathi.setup` | all keys, keeping current values |
+| `python -m saathi.setup --list` | what sections exist |
+| `python -m saathi.setup --only calling` | just one section |
+| `python -m saathi.doctor` | what's broken, and the fix for each |
+| `python -m saathi.calling.cli check` | what calling still needs |
 
 ## Tests
 
@@ -186,7 +203,7 @@ including the step most likely to fail.
 ./venv/bin/pytest -q
 ```
 
-100 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
+112 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
 is faked.
 
 ## What is and isn't proven

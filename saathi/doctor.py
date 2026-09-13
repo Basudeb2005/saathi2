@@ -19,6 +19,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
+from saathi.logging_setup import quiet_console
 from saathi.config import (
     LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET,
@@ -248,6 +249,7 @@ def run_check(check: Check) -> Result:
 
 
 def main() -> int:
+    quiet_console()
     print(f"\n{BOLD}Saathi doctor{RESET}\n")
 
     results = []

@@ -176,111 +176,101 @@ the calling feature.
 
 ## 5. Calling
 
-The chain, end to end:
+One command walks the whole thing:
+
+```bash
+./venv/bin/python -m saathi.calling.cli guide
+```
+
+It asks as it goes, writes the files it can write, and prints the exact
+commands for the ones it can't. Stop any time — re-running picks up where
+you left off, and `check` tells you what's still missing.
+
+The chain it builds:
 
 ```
    you ──► Saathi ──► LiveKit room ──► SIP trunk ──► SIP server ──► Linphone
                                                                     (their phone)
 ```
 
-Saathi doesn't "call" anyone in the telephone sense — it pulls them into
-the room it's already in. That's why there's no audio bridge to build.
+Saathi doesn't dial anyone in the telephone sense — it pulls them into
+the room it's already in. That's why there's no audio bridge here.
 
-### 5a. Everyone gets a free SIP address
+### The five steps, if you'd rather do them by hand
 
-Each family member, **and Saathi itself**:
-
-1. Register at [subscribe.linphone.org](https://subscribe.linphone.org/register/email)
-2. You get `username@sip.linphone.org`
-3. They install [Linphone](https://linphone.org) and sign in
-
-Make one extra account for the speaker — say `saathi-home` — because the
-trunk needs its own identity to authenticate as.
+**1. Everyone gets a free SIP address.** Each family member, **and Saathi
+itself**, registers at
+[subscribe.linphone.org](https://subscribe.linphone.org/register/email)
+and gets `username@sip.linphone.org`. They install
+[Linphone](https://linphone.org) and sign in. Make one extra account for
+the speaker — the trunk needs its own identity to authenticate as.
 
 > **iOS: test this before going further.** Lock the iPhone, leave it an
-> hour, then call it. If it doesn't ring, Linphone has been suspended in
-> the background and you need VoIP push configured. Find this out now,
-> not after you've built everything on top of it.
+> hour, then call it. If it doesn't ring, Linphone was suspended in the
+> background and you need VoIP push. Find this out now, not after you've
+> built everything on top of it.
 
-### 5b. Point LiveKit at it
-
-Install the CLI, then create an outbound trunk:
+**2. Install LiveKit's CLI.**
 
 ```bash
 curl -sSL https://get.livekit.io/cli | bash
 lk cloud auth
 ```
 
-`trunk.json`:
-
-```json
-{
-  "trunk": {
-    "name": "linphone",
-    "address": "sip.linphone.org",
-    "numbers": ["saathi-home"],
-    "auth_username": "saathi-home",
-    "auth_password": "the password you set"
-  }
-}
-```
+**3. Create the trunk.**
 
 ```bash
-lk sip outbound create trunk.json     # prints a trunk id: ST_...
-```
-
-Put it in `.env`:
-
-```
-LIVEKIT_SIP_TRUNK_ID=ST_xxxxxxxx
+./venv/bin/python -m saathi.calling.cli trunk    # writes trunk.json (mode 600)
+lk sip outbound create trunk.json                 # prints ST_...
+./venv/bin/python -m saathi.setup --only calling  # save the id
 ```
 
 > **This is the step most likely to fail.** LiveKit authenticates per
-> INVITE; some SIP servers, possibly including Linphone's free one, want
-> a full REGISTER first and will reject the call. If you get 401/403 in
-> the SIP logs, that's this — see 5d.
+> INVITE; some SIP servers want a full REGISTER first and reject with
+> 401/403. If that happens, see 5d.
 >
-> Field names have also moved between LiveKit versions. Check
-> `lk sip outbound create --help` against the JSON above before assuming
-> your credentials are wrong.
+> Field names have also moved between LiveKit versions — check
+> `lk sip outbound create --help` against `trunk.json` before assuming
+> your password is wrong.
 
-### 5c. Contacts
+**4. Add contacts.** Only these names can ever be dialled.
 
-`contacts.json` — names Saathi will accept, and nothing else:
-
-```json
-{
-  "priya": {
-    "transport": "sip",
-    "address": "sip:priya@sip.linphone.org",
-    "label": "your daughter"
-  }
-}
+```bash
+./venv/bin/python -m saathi.calling.cli contacts add priya sip:priya@sip.linphone.org --label "your daughter"
+./venv/bin/python -m saathi.calling.cli contacts add doctor +15551234567 --label "Dr. Rao"
+./venv/bin/python -m saathi.calling.cli contacts list
 ```
 
-Restart the agent and say *"call Priya"*. Their phone should ring.
+A `+` address is inferred as PSTN (paid), a `sip:` one as free.
+
+**5. Ring a real phone.**
+
+```bash
+./venv/bin/python -m saathi.calling.cli check      # everything in place?
+./venv/bin/python -m saathi.calling.cli test priya # actually call
+```
+
+Then say **"call Priya"** to the speaker.
 
 ### 5d. If Linphone's free server won't accept the trunk
 
 Run your own. A $5 VPS with Asterisk, family registers Linphone against
 it instead of `sip.linphone.org`, and the trunk address becomes your
-server. More work, but it definitely works and nothing else changes —
-only the `address` in `trunk.json` and the domain in `contacts.json`.
+server. More work, but it definitely works — and nothing else changes,
+only the `address` in `trunk.json` and the domain in your contacts.
 
 ### 5e. Calling real phone numbers (optional, costs money)
 
-For the relatives who won't install anything. Buy a trunk from Twilio or
-Telnyx, add it as a second LiveKit outbound trunk, and set:
+For relatives who won't install anything. Buy a trunk from Twilio or
+Telnyx, add it as a second LiveKit outbound trunk, and save it:
 
+```bash
+./venv/bin/python -m saathi.setup --only calling   # LIVEKIT_PSTN_TRUNK_ID
 ```
-LIVEKIT_PSTN_TRUNK_ID=ST_yyyyyyyy
-```
 
-Then contacts with `"transport": "pstn"` and an E.164 number route over
-it automatically. **Check the per-minute rate for your country first** —
-India is meaningfully pricier than the US.
-
----
+Contacts with a `+` number then route over it automatically. **Check the
+per-minute rate for your country first** — India is meaningfully pricier
+than the US.
 
 ## 6. Wake word
 
@@ -309,6 +299,21 @@ Note that `wake.py` currently *prints* detections — wiring one to "start
 a session" is still to do.
 
 ---
+
+## Re-running anything
+
+Nothing here is one-shot. If a step failed or you skipped it:
+
+| Command | Does |
+|---|---|
+| `bash setup.sh` | the whole install again; skips what's done |
+| `python -m saathi.setup` | all keys, keeping what's set |
+| `python -m saathi.setup --list` | show the sections |
+| `python -m saathi.setup --only calling` | just the trunk ids |
+| `python -m saathi.setup --only openai` | just that key |
+| `python -m saathi.doctor` | check all six parts, with fixes |
+| `python -m saathi.calling.cli check` | what calling still needs |
+| `python -m saathi.calling.cli guide` | walk calling again from the top |
 
 ## When something doesn't work
 

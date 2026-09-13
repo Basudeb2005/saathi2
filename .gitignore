@@ -4,5 +4,7 @@ venv/
 .venv/
 .env
 contacts.json
+# has a SIP password in it
+trunk.json
 logs/*.log*
 .pytest_cache/

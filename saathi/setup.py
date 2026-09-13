@@ -16,6 +16,7 @@ talks to a terminal.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import tempfile
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from saathi.config import ROOT_DIR
+from saathi.logging_setup import quiet_console
 
 ENV_PATH = ROOT_DIR / ".env"
 
@@ -74,6 +76,12 @@ class Section:
     blurb: str
     fields: List[Field]
     optional: bool = False
+    # Short name for `--only`, derived from the title when not given.
+    slug: str = ""
+
+    def __post_init__(self):
+        if not self.slug:
+            self.slug = self.title.lower().replace(" ", "-")
     # Set automatically when the section is filled in — so choosing to
     # configure Deepgram also flips STT_PROVIDER, rather than leaving the
     # user with a key that silently does nothing.
@@ -258,24 +266,62 @@ def _confirm(prompt: str, default: bool = False) -> bool:
     return answer in ("y", "yes")
 
 
-def main() -> int:
+def find_sections(only: Optional[str]) -> List[Section]:
+    """Resolve `--only`, matching on slug or a prefix of it so
+    `--only calling` and `--only call` both work."""
+    if not only:
+        return SECTIONS
+    wanted = only.lower().strip()
+    matches = [s for s in SECTIONS if s.slug == wanted]
+    if not matches:
+        matches = [s for s in SECTIONS if s.slug.startswith(wanted)]
+    return matches
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m saathi.setup",
+        description="Fill in .env by answering questions. Re-run it any time.",
+    )
+    parser.add_argument(
+        "--only", metavar="SECTION",
+        help="configure just one section, e.g. --only calling",
+    )
+    parser.add_argument("--list", action="store_true", help="list the sections and exit")
+    args = parser.parse_args(argv)
+
+    if args.list:
+        print("\nSections:\n")
+        for section in SECTIONS:
+            tag = f" {DIM}(optional){RESET}" if section.optional else ""
+            print(f"  {BOLD}{section.slug}{RESET}{tag}\n    {DIM}{section.blurb}{RESET}")
+        print(f"\nConfigure one with: {BOLD}python -m saathi.setup --only <section>{RESET}\n")
+        return 0
+
+    sections = find_sections(args.only)
+    if not sections:
+        print(f"No section matching {args.only!r}. Try --list.", file=sys.stderr)
+        return 1
+
     if not sys.stdin.isatty():
         print("saathi.setup needs an interactive terminal.", file=sys.stderr)
         return 1
 
+    quiet_console()
     values = read_env(ENV_PATH)
 
     print(f"\n{BOLD}Saathi setup{RESET}")
     print(f"{DIM}Writes {ENV_PATH}. Enter keeps what's already there. Ctrl-C to bail.{RESET}")
 
     try:
-        for section in SECTIONS:
+        for section in sections:
             has_values = any(values.get(f.key) for f in section.fields)
 
             print(f"\n{BOLD}{section.title}{RESET}")
             print(f"{DIM}{section.blurb}{RESET}")
 
-            if section.optional and not has_values:
+            targeted = args.only is not None
+            if section.optional and not has_values and not targeted:
                 if not _confirm(f"  set up {section.title} now?"):
                     print(f"  {DIM}skipped{RESET}")
                     continue
@@ -292,14 +338,17 @@ def main() -> int:
     write_env(ENV_PATH, values)
     print(f"\n{GREEN}✓{RESET} wrote {ENV_PATH} {DIM}(mode 600){RESET}")
 
-    still_missing = missing_required(values)
+    still_missing = missing_required(values) if not args.only else []
     if still_missing:
         print(f"{YELLOW}!{RESET} still needed before it can talk: {', '.join(still_missing)}")
         print(f"  {DIM}re-run `python -m saathi.setup` when you have them{RESET}")
         return 1
 
-    print(f"\nNext:  {BOLD}python -m saathi.agent dev{RESET}")
-    print(f"{DIM}then join the room from your LiveKit project's Playground.{RESET}\n")
+    if args.only:
+        print(f"{DIM}Check it with: python -m saathi.doctor{RESET}\n")
+    else:
+        print(f"\nNext:  {BOLD}python -m saathi.doctor{RESET}")
+        print(f"{DIM}then: python -m saathi.device{RESET}\n")
     return 0
 
 

@@ -26,11 +26,20 @@ warn() { printf '\033[33m!\033[0m %s\n' "$1"; }
 bold "Installing Mopidy 4"
 
 # --- the broken one has to go first ------------------------------------
-# Two Mopidys fighting over port 6680 is a confusing failure, and the apt
-# one restarting on boot would silently win.
+# Two Mopidys fighting over port 6680 is a confusing failure: whichever
+# binds first wins, and the apt one restarting on boot would silently
+# take the port back. Masked, not just disabled, so nothing re-enables it.
 if systemctl list-unit-files 2>/dev/null | grep -q '^mopidy.service'; then
   sudo systemctl disable --now mopidy >/dev/null 2>&1 || true
-  ok "stopped Debian's mopidy"
+  sudo systemctl mask mopidy >/dev/null 2>&1 || true
+  ok "stopped and masked Debian's mopidy"
+fi
+
+# Anything still holding 6680 will make the new service fail to bind.
+if ss -tlnp 2>/dev/null | grep -q ':6680'; then
+  warn "something still on port 6680 — killing it"
+  sudo fuser -k 6680/tcp >/dev/null 2>&1 || true
+  sleep 2
 fi
 
 sudo apt-get install -y -qq python3-gi python3-gst-1.0 gstreamer1.0-plugins-good \
@@ -38,9 +47,21 @@ sudo apt-get install -y -qq python3-gi python3-gst-1.0 gstreamer1.0-plugins-good
 ok "gstreamer plugins"
 
 [ -d "$VENV" ] || python3 -m venv --system-site-packages "$VENV"
-"$VENV/bin/pip" install -q --upgrade pip
-"$VENV/bin/pip" install -q "mopidy>=4,<5" "mopidy-youtube>=4,<5" yt-dlp
-ok "mopidy $("$VENV/bin/mopidy" --version 2>/dev/null | tail -1)"
+"$VENV/bin/pip" install --upgrade -q pip
+# Not quiet, and not one line. PyPI drops connections from this network
+# often enough that a half-finished install is a real outcome, and a
+# missing mopidy-youtube presents only as "no youtube backend" hours
+# later.
+"$VENV/bin/pip" install "mopidy>=4,<5" "mopidy-youtube>=4,<5" yt-dlp
+
+for pkg in mopidy mopidy-youtube yt-dlp; do
+  if ! "$VENV/bin/pip" show "$pkg" >/dev/null 2>&1; then
+    warn "$pkg did NOT install — retrying once"
+    "$VENV/bin/pip" install "$pkg" || true
+  fi
+done
+"$VENV/bin/pip" list 2>/dev/null | grep -i -E "^(mopidy|yt-dlp)" | sed 's/^/  /'
+ok "packages installed"
 
 # --- config ------------------------------------------------------------
 mkdir -p "$CONF_DIR" "$HOME/.local/share/mopidy"
@@ -98,12 +119,22 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
-if curl -fsS -m 2 -X POST http://127.0.0.1:6680/mopidy/rpc \
-    -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1; then
-  ok "mopidy responding"
-  echo
-  echo "  check backends:  ./venv/bin/python -m saathi.music.cli backends"
-  echo "  watch logs:      journalctl --user -fu mopidy"
+VERSION_JSON="$(curl -fsS -m 2 -X POST http://127.0.0.1:6680/mopidy/rpc \
+  -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' 2>/dev/null || true)"
+
+if [ -n "$VERSION_JSON" ]; then
+  echo "  answering on 6680: $VERSION_JSON"
+  # Which Mopidy answered matters more than that one did: the old 3.4.2
+  # replies happily and is exactly what we are trying to get rid of.
+  case "$VERSION_JSON" in
+    *'"4.'*) ok "Mopidy 4 is the one serving" ;;
+    *) warn "an OLD Mopidy is still serving port 6680 — the new one never bound" ;;
+  esac
 else
-  warn "not responding — journalctl --user -u mopidy -n 40"
+  warn "not responding. Its own log says why:"
+  journalctl --user -u mopidy -n 30 --no-pager 2>/dev/null | sed 's/^/    /' || true
 fi
+
+echo
+echo "  backends:  ./venv/bin/python -m saathi.music.cli backends"
+echo "  logs:      journalctl --user -fu mopidy"

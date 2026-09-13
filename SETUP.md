@@ -114,7 +114,7 @@ enabled = true
 
 ```bash
 sudo systemctl enable --now mopidy
-curl -s -X POST http://localhost:6680/mopidy/rpc \
+curl -s -X POST http://127.0.0.1:6680/mopidy/rpc \
   -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}'
 ```
 

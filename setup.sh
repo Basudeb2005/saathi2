@@ -124,11 +124,11 @@ CONF
   sudo systemctl restart mopidy >/dev/null 2>&1 || true
 
   for _ in $(seq 1 15); do
-    curl -fsS -m 1 -X POST http://localhost:6680/mopidy/rpc \
+    curl -fsS -m 1 -X POST http://127.0.0.1:6680/mopidy/rpc \
       -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1 && break
     sleep 1
   done
-  if curl -fsS -m 2 -X POST http://localhost:6680/mopidy/rpc \
+  if curl -fsS -m 2 -X POST http://127.0.0.1:6680/mopidy/rpc \
       -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1; then
     ok "mopidy responding"
   else

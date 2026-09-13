@@ -64,7 +64,11 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 # JSON-RPC endpoint rather than importing it, so it can be restarted,
 # upgraded, or swapped for another MPD-speaking server without touching
 # the agent.
-MOPIDY_RPC_URL = os.getenv("MOPIDY_RPC_URL", "http://localhost:6680/mopidy/rpc")
+# 127.0.0.1, not "localhost". Mopidy binds to the IPv4 loopback, while
+# "localhost" resolves to ::1 first on a dual-stack box — so the name
+# connects to an IPv6 address nothing is listening on and the failure
+# reads as "Mopidy isn't running" when it is.
+MOPIDY_RPC_URL = os.getenv("MOPIDY_RPC_URL", "http://127.0.0.1:6680/mopidy/rpc")
 MOPIDY_TIMEOUT_S = float(os.getenv("MOPIDY_TIMEOUT_S", "10"))
 
 # Volume the music ducks to while Saathi is speaking or on a call, as a

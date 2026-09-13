@@ -58,7 +58,27 @@ saathi/
   calling/
     sip.py           add a SIP participant to the room
   wake.py            on-device wake word (openWakeWord or Porcupine)
+  device.py          the Pi in its own room: mic in, speaker out
+  doctor.py          check all six moving parts before blaming the code
+  setup.py           the key prompt
 ```
+
+### Two processes, on purpose
+
+`saathi.agent` is a LiveKit worker — the brain, waiting to be dispatched
+into a room. `saathi.device` is the box — wake word, microphone, speaker.
+They're separate services because they fail differently: the agent dying
+is a cloud problem, the device dying is an audio one, and restarting one
+shouldn't disturb the other.
+
+The device **connects only while you're talking to it**. LiveKit's free
+tier is 1,000 agent minutes a month; a box holding the line open all day
+spends that in a fortnight, while one that joins per conversation spends
+a few minutes a day. That's what the idle timeout in `device.py` is for.
+
+Only one process can hold the microphone, so the wake listener is torn
+down for the duration of a session and rebuilt afterwards — serial by
+construction rather than by luck.
 
 ### Contacts decide what a call costs
 
@@ -151,7 +171,8 @@ later without the rest:
 Then:
 
 ```bash
-./venv/bin/python -m saathi.agent dev
+./venv/bin/python -m saathi.doctor     # check all six moving parts
+./venv/bin/python -m saathi.device     # then talk to it
 ```
 
 Also needed, separately: **Mopidy** on the same Pi for music, and — for
@@ -165,7 +186,7 @@ including the step most likely to fail.
 ./venv/bin/pytest -q
 ```
 
-65 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
+100 tests, no API keys, no LiveKit, no Mopidy, no Pi — every network edge
 is faked.
 
 ## What is and isn't proven

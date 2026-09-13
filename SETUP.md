@@ -127,12 +127,47 @@ A version number back means the music layer is done.
 **Do this before touching calling.** It proves the keys, the mic, the
 speaker and the agent all work, and it's much easier to debug alone.
 
+First, check every piece independently:
+
 ```bash
-./venv/bin/python -m saathi.agent dev
+./venv/bin/python -m saathi.doctor
 ```
 
-Then open your LiveKit project's **Playground** in a browser and join the
-room. Talk to it. Ask it to play some music.
+It tests config, ALSA, whether the mic **actually hears sound** (not just
+whether it enumerates — a silent mic that looks configured is the most
+demoralising failure here), your OpenAI key, LiveKit credentials, Mopidy,
+Radio Browser and the wake engine. Each failure names its own fix, and
+one failing never stops the rest, so you see everything wrong at once.
+
+When it's green:
+
+```bash
+./venv/bin/python -m saathi.device
+```
+
+Say the wake word — **"hey jarvis"** by default — then talk. Ask it to
+play some music. It hangs up after about 12 seconds of quiet and goes
+back to listening.
+
+`saathi.device` needs `saathi.agent` running too. Either open a second
+terminal for `./venv/bin/python -m saathi.agent dev`, or install the
+services (below) which handle both.
+
+### Running on boot
+
+`setup.sh` offers this at the end; to do it later:
+
+```bash
+bash systemd/install.sh
+```
+
+Two services, because they fail differently:
+
+```bash
+systemctl status saathi@$USER          # the box
+systemctl status saathi-agent@$USER    # the brain
+journalctl -fu saathi@$USER            # watch it live
+```
 
 Once that works, you have a working smart speaker. Everything below is
 the calling feature.
@@ -277,8 +312,13 @@ a session" is still to do.
 
 ## When something doesn't work
 
+**Run `python -m saathi.doctor` first** — it checks all six moving parts
+and names the fix for each. The table below is for what it can't catch.
+
 | Symptom | Look at |
 |---|---|
+| It wakes but never replies | is `saathi-agent` running? `systemctl status saathi-agent@$USER` |
+| It hangs up mid-sentence | raise `SESSION_IDLE_TIMEOUT_S`, or mic gain is too low to register speech |
 | Nothing happens at all | `arecord -l` — no mic is the usual answer |
 | Music never plays | `curl` Mopidy's RPC (step 3); check `journalctl -u mopidy` |
 | Songs fail, radio works | Mopidy-YouTube broke again — expected, radio is the stable floor |

@@ -11,6 +11,9 @@ openwakeword
 numpy
 # pvporcupine
 
+# Restores stdlib `audioop`, removed in Python 3.13 (PEP 594).
+audioop-lts; python_version >= "3.13"
+
 # Music + config
 requests
 python-dotenv

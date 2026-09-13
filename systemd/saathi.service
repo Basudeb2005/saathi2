@@ -1,0 +1,19 @@
+# The box: wake word, microphone, speaker.
+[Unit]
+Description=Saathi speaker
+After=network-online.target sound.target saathi-agent.service mopidy.service
+Wants=network-online.target saathi-agent.service
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/saathi2
+ExecStart=/home/%i/saathi2/venv/bin/python -m saathi.device
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+# audio group for ALSA access.
+SupplementaryGroups=audio
+
+[Install]
+WantedBy=multi-user.target

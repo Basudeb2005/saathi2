@@ -1,0 +1,283 @@
+"""
+`python -m saathi.doctor` — check everything before blaming the code.
+
+This project has six moving parts that fail independently: keys, the
+microphone, the speaker, Mopidy, Radio Browser and LiveKit. When it
+"doesn't work", the symptom is always the same — silence — and the cause
+is almost never where you'd look first. So each piece is checked on its
+own and each failure names its own fix.
+
+Every check is independent: one failing never stops the rest from
+running, because knowing all four things that are wrong beats finding out
+one at a time.
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from typing import Callable, List, Optional
+
+from saathi.config import (
+    LIVEKIT_API_KEY,
+    LIVEKIT_API_SECRET,
+    LIVEKIT_URL,
+    MOPIDY_RPC_URL,
+    OPENAI_API_KEY,
+    ROOT_DIR,
+    WAKE_CAPTURE_DEVICE,
+)
+
+GREEN, YELLOW, RED, DIM, BOLD, RESET = (
+    "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
+)
+
+OK, WARN, FAIL = "ok", "warn", "fail"
+
+
+@dataclass
+class Result:
+    status: str
+    detail: str = ""
+    fix: str = ""
+
+
+@dataclass
+class Check:
+    name: str
+    run: Callable[[], Result]
+    # A warning rather than a failure: things you don't need until later.
+    optional: bool = False
+
+
+# ---- the checks ---------------------------------------------------------
+
+def check_env() -> Result:
+    if not (ROOT_DIR / ".env").exists():
+        return Result(FAIL, "no .env file", "run: python -m saathi.setup")
+
+    missing = [
+        name for name, value in (
+            ("OPENAI_API_KEY", OPENAI_API_KEY),
+            ("LIVEKIT_URL", LIVEKIT_URL),
+            ("LIVEKIT_API_KEY", LIVEKIT_API_KEY),
+            ("LIVEKIT_API_SECRET", LIVEKIT_API_SECRET),
+        ) if not value
+    ]
+    if missing:
+        return Result(FAIL, f"missing {', '.join(missing)}", "run: python -m saathi.setup")
+    return Result(OK, "all required keys present")
+
+
+def check_tools() -> Result:
+    missing = [t for t in ("arecord", "aplay") if not shutil.which(t)]
+    if missing:
+        return Result(FAIL, f"missing {', '.join(missing)}", "sudo apt install alsa-utils")
+    return Result(OK, "arecord and aplay present")
+
+
+def check_mic_exists() -> Result:
+    if not shutil.which("arecord"):
+        return Result(FAIL, "arecord not installed", "sudo apt install alsa-utils")
+    try:
+        out = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=10).stdout
+    except Exception as e:
+        return Result(FAIL, f"couldn't list capture devices ({e})")
+
+    cards = [line for line in out.splitlines() if line.startswith("card ")]
+    if not cards:
+        return Result(
+            FAIL, "no capture device",
+            "plug in a USB mic or a HAT — the Pi's onboard audio is playback-only",
+        )
+    return Result(OK, f"{len(cards)} capture device(s)")
+
+
+def check_mic_hears() -> Result:
+    """Record a second and look at the level.
+
+    A mic that enumerates but returns silence is the single most
+    demoralising failure in this project — everything looks configured and
+    nothing works — so it gets its own check rather than being assumed.
+    """
+    import audioop
+
+    cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-d", "1", "-t", "raw"]
+    if WAKE_CAPTURE_DEVICE:
+        cmd += ["-D", WAKE_CAPTURE_DEVICE]
+
+    try:
+        pcm = subprocess.run(cmd, capture_output=True, timeout=15).stdout
+    except Exception as e:
+        return Result(FAIL, f"recording failed ({e})", "check WAKE_CAPTURE_DEVICE")
+
+    if not pcm:
+        return Result(FAIL, "recorded nothing", "wrong device? try: arecord -l, then set WAKE_CAPTURE_DEVICE")
+
+    level = audioop.rms(pcm, 2)
+    if level < 20:
+        return Result(
+            FAIL, f"mic is silent (rms {level})",
+            "check it's not muted: alsamixer -> F4 -> raise Capture",
+        )
+    if level < 100:
+        return Result(WARN, f"mic is very quiet (rms {level})", "raise the gain in alsamixer")
+    return Result(OK, f"mic hears sound (rms {level})")
+
+
+def check_mopidy() -> Result:
+    import requests
+
+    try:
+        response = requests.post(
+            MOPIDY_RPC_URL,
+            json={"jsonrpc": "2.0", "id": 1, "method": "core.get_version"},
+            timeout=5,
+        )
+        response.raise_for_status()
+        version = response.json().get("result")
+    except Exception as e:
+        return Result(
+            FAIL, f"unreachable at {MOPIDY_RPC_URL} ({type(e).__name__})",
+            "sudo systemctl start mopidy — and enable [http] in /etc/mopidy/mopidy.conf",
+        )
+    return Result(OK, f"Mopidy {version}")
+
+
+def check_radio() -> Result:
+    from saathi.music.radio import RadioBrowser, RadioError
+
+    try:
+        station = RadioBrowser().best("news")
+    except RadioError as e:
+        return Result(FAIL, str(e), "check the Pi's internet connection")
+    if station is None:
+        return Result(WARN, "reachable but returned no stations")
+    return Result(OK, f"found {station.name!r}")
+
+
+def check_openai() -> Result:
+    if not OPENAI_API_KEY:
+        return Result(FAIL, "no key", "run: python -m saathi.setup")
+
+    import requests
+
+    try:
+        response = requests.get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            timeout=15,
+        )
+    except Exception as e:
+        return Result(FAIL, f"couldn't reach OpenAI ({type(e).__name__})")
+
+    if response.status_code == 401:
+        return Result(FAIL, "key rejected", "the key is wrong or revoked — make a new one")
+    if response.status_code == 429:
+        return Result(FAIL, "rate limited or out of credit", "add credit at platform.openai.com")
+    if not response.ok:
+        return Result(FAIL, f"HTTP {response.status_code}")
+    return Result(OK, "key accepted")
+
+
+def check_livekit() -> Result:
+    if not (LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET):
+        return Result(FAIL, "not configured", "run: python -m saathi.setup")
+    try:
+        from saathi.device import _access_token
+
+        _access_token()
+    except Exception as e:
+        return Result(FAIL, f"couldn't mint a token ({e})")
+    return Result(OK, f"credentials valid for {LIVEKIT_URL}")
+
+
+def check_wake_models() -> Result:
+    try:
+        import openwakeword  # noqa: F401
+    except ImportError:
+        return Result(FAIL, "openwakeword not installed", "./venv/bin/pip install -r requirements.txt")
+    try:
+        from saathi.wake import build_engine
+
+        build_engine()
+    except Exception as e:
+        return Result(FAIL, str(e)[:120], "first run downloads the models — check internet")
+    return Result(OK, "wake engine loads")
+
+
+def check_calling() -> Result:
+    from saathi.config import LIVEKIT_PSTN_TRUNK_ID, LIVEKIT_SIP_TRUNK_ID
+
+    if not (LIVEKIT_SIP_TRUNK_ID or LIVEKIT_PSTN_TRUNK_ID):
+        return Result(WARN, "no trunk configured", "optional — see SETUP.md §5")
+    from saathi.contacts import ContactsRegistry
+
+    names = ContactsRegistry().names()
+    if not names:
+        return Result(WARN, "trunk set but no contacts", "edit contacts.json")
+    return Result(OK, f"{len(names)} contact(s): {', '.join(names)}")
+
+
+CHECKS: List[Check] = [
+    Check("Configuration", check_env),
+    Check("Audio tools", check_tools),
+    Check("Microphone present", check_mic_exists),
+    Check("Microphone hears", check_mic_hears),
+    Check("OpenAI", check_openai),
+    Check("LiveKit", check_livekit),
+    Check("Mopidy", check_mopidy),
+    Check("Radio Browser", check_radio),
+    Check("Wake word", check_wake_models),
+    Check("Calling", check_calling, optional=True),
+]
+
+
+# ---- runner -------------------------------------------------------------
+
+def run_check(check: Check) -> Result:
+    """Never let a check's own crash look like the thing it was checking."""
+    try:
+        result = check.run()
+    except Exception as e:
+        return Result(FAIL, f"check itself errored: {type(e).__name__}: {e}")
+    if check.optional and result.status == FAIL:
+        return Result(WARN, result.detail, result.fix)
+    return result
+
+
+def main() -> int:
+    print(f"\n{BOLD}Saathi doctor{RESET}\n")
+
+    results = []
+    for check in CHECKS:
+        print(f"  {DIM}...{RESET} {check.name}", end="\r", flush=True)
+        result = run_check(check)
+        results.append((check, result))
+
+        mark = {OK: f"{GREEN}✓{RESET}", WARN: f"{YELLOW}!{RESET}", FAIL: f"{RED}✗{RESET}"}[result.status]
+        print(f"  {mark} {check.name:<22} {DIM}{result.detail}{RESET}")
+        if result.fix and result.status != OK:
+            print(f"    {DIM}→ {result.fix}{RESET}")
+
+    failed = [c.name for c, r in results if r.status == FAIL]
+    warned = [c.name for c, r in results if r.status == WARN]
+
+    print()
+    if failed:
+        print(f"{RED}{len(failed)} blocking problem(s){RESET}: {', '.join(failed)}")
+        return 1
+
+    if warned:
+        print(f"{YELLOW}Ready, with {len(warned)} warning(s){RESET}: {', '.join(warned)}")
+    else:
+        print(f"{GREEN}Everything checks out.{RESET}")
+
+    print(f"\nStart it with:  {BOLD}sudo systemctl start saathi{RESET}")
+    print(f"{DIM}or in the foreground: ./venv/bin/python -m saathi.device{RESET}\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

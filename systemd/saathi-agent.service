@@ -1,0 +1,23 @@
+# The brain: a LiveKit worker waiting to be dispatched into a room.
+# Runs separately from saathi.service because the two fail differently —
+# the agent dying is a cloud problem, the device dying is an audio one,
+# and restarting one shouldn't disturb the other.
+[Unit]
+Description=Saathi agent worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/saathi2
+ExecStart=/home/%i/saathi2/venv/bin/python -m saathi.agent start
+Restart=always
+RestartSec=5
+# The cloud is not always up. Keep retrying rather than giving up after
+# systemd's default burst limit and leaving the box silent until someone
+# notices days later.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

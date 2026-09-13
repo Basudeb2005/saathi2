@@ -67,4 +67,16 @@ fi
 
 # --- keys --------------------------------------------------------------
 echo
-exec ./venv/bin/python -m saathi.setup
+./venv/bin/python -m saathi.setup || true
+
+# --- check ---------------------------------------------------------------
+echo
+./venv/bin/python -m saathi.doctor || true
+
+# --- run on boot ---------------------------------------------------------
+echo
+read -rp "Start Saathi automatically on boot? [y/N] " REPLY
+case "$REPLY" in
+  [yY]*) bash systemd/install.sh ;;
+  *) dim "skipped — run it yourself with: ./venv/bin/python -m saathi.device" ;;
+esac

@@ -123,3 +123,24 @@ PORCUPINE_KEYWORD_PATHS = [p.strip() for p in os.getenv("PORCUPINE_KEYWORD_PATHS
 PORCUPINE_KEYWORDS = [k.strip() for k in os.getenv("PORCUPINE_KEYWORDS", "jarvis").split(",") if k.strip()]
 # 0-1. Higher catches more and false-fires more.
 PORCUPINE_SENSITIVITY = float(os.getenv("PORCUPINE_SENSITIVITY", "0.5"))
+
+# ---- Device (the Pi as a room participant) -----------------------------
+# Identity the Pi publishes under. The agent uses this to tell the person
+# in the room apart from someone dialled in over SIP.
+DEVICE_IDENTITY = os.getenv("DEVICE_IDENTITY", "saathi-device")
+
+# Mic capture format. 16kHz mono matches what the wake word wants and
+# what LiveKit publishes, so nothing resamples anywhere in this path.
+DEVICE_SAMPLE_RATE = int(os.getenv("DEVICE_SAMPLE_RATE", "16000"))
+DEVICE_FRAME_MS = int(os.getenv("DEVICE_FRAME_MS", "20"))
+
+# A session ends this long after the last thing anyone said — the agent
+# going quiet AND the room going quiet. Connecting only for the length of
+# a conversation is what keeps this inside LiveKit's free tier; a box
+# that stays connected all day burns the monthly allowance in a fortnight.
+SESSION_IDLE_TIMEOUT_S = float(os.getenv("SESSION_IDLE_TIMEOUT_S", "12"))
+# Hard cap, so a stuck session can't hold the line open forever.
+SESSION_MAX_S = float(os.getenv("SESSION_MAX_S", "600"))
+# Above this RMS (16-bit samples) someone is talking, so the idle timer
+# should not be counting down.
+SPEECH_RMS_THRESHOLD = int(os.getenv("SPEECH_RMS_THRESHOLD", "300"))

@@ -64,6 +64,26 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_backends(args) -> int:
+    client = MopidyClient()
+    try:
+        schemes = client.uri_schemes()
+    except MopidyError as e:
+        print(f"  {RED}✗{RESET} {e}")
+        return 1
+
+    print(f"  loaded: {', '.join(schemes) or '(none)'}")
+    if "youtube" in schemes:
+        print(f"  {GREEN}✓{RESET} songs by name available")
+        return 0
+
+    print(f"  {RED}✗{RESET} no youtube backend — songs by name won't work, only radio")
+    print(f"    {DIM}sudo pip3 install --break-system-packages Mopidy-YouTube yt-dlp{RESET}")
+    print(f"    {DIM}then add [youtube]\\nenabled = true to /etc/mopidy/mopidy.conf{RESET}")
+    print(f"    {DIM}check why it was skipped: journalctl -u mopidy -n 40 | grep -i youtube{RESET}")
+    return 1
+
+
 def _simple(action: str):
     def run(args) -> int:
         try:
@@ -91,6 +111,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--limit", type=int, default=10)
 
     sub.add_parser("status", help="what Mopidy is doing right now")
+    sub.add_parser("backends", help="which Mopidy backends loaded")
     for name in ("pause", "resume", "stop", "next_track"):
         sub.add_parser(name.replace("_track", ""), help=name.replace("_", " "))
 
@@ -103,6 +124,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_stations(args)
     if args.command == "status":
         return cmd_status(args)
+    if args.command == "backends":
+        return cmd_backends(args)
     if args.command in ("pause", "resume", "stop"):
         return _simple(args.command)(args)
     if args.command == "next":

@@ -117,6 +117,16 @@ class MopidyClient:
     def get_volume(self) -> Optional[int]:
         return self._call("core.mixer.get_volume")
 
+    def uri_schemes(self) -> List[str]:
+        """Which backends Mopidy actually loaded, e.g. ["http", "youtube"].
+
+        Installing Mopidy-YouTube is not the same as Mopidy loading it —
+        a missing dependency or a config error makes it skip the
+        extension quietly, and the only symptom is that every song search
+        comes back empty.
+        """
+        return self._call("core.get_uri_schemes") or []
+
     # ---- search --------------------------------------------------------
 
     def search_tracks(self, query: str, uri_scheme: Optional[str] = None, limit: int = 20) -> List[str]:

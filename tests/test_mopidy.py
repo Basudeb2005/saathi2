@@ -66,3 +66,13 @@ def test_volume_is_clamped():
     c.set_volume(500)
     c.set_volume(-20)
     assert [call["json"]["params"]["volume"] for call in session.calls] == [100, 0]
+
+
+def test_uri_schemes_lists_loaded_backends():
+    """Installing Mopidy-YouTube isn't the same as Mopidy loading it, and
+    the only symptom of a skipped extension is empty song searches."""
+    assert client([rpc_ok(["http", "youtube"])]).uri_schemes() == ["http", "youtube"]
+
+
+def test_uri_schemes_is_empty_not_none_when_unset():
+    assert client([rpc_ok(None)]).uri_schemes() == []

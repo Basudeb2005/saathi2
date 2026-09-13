@@ -85,26 +85,45 @@ fi
 # this is why "music never plays" with Mopidy sitting right there.
 MOPIDY_CONF=/etc/mopidy/mopidy.conf
 if command -v mopidy >/dev/null 2>&1; then
-  if ! sudo grep -q "# --- saathi ---" "$MOPIDY_CONF" 2>/dev/null; then
-    sudo cp "$MOPIDY_CONF" "$MOPIDY_CONF.bak.$(date +%s)" 2>/dev/null || true
-    sudo tee -a "$MOPIDY_CONF" >/dev/null <<'CONF'
+  # Edited with configparser rather than appended to. Mopidy's config is
+  # ini, and a second [http] section in one file is a parse error, not a
+  # merge — so appending breaks the service on any machine whose conf
+  # already has the section, which is most of them.
+  sudo cp "$MOPIDY_CONF" "$MOPIDY_CONF.bak.$(date +%s)" 2>/dev/null || true
+  sudo python3 - "$MOPIDY_CONF" <<'CONF'
+import configparser, sys
 
-# --- saathi ---
-# Saathi drives Mopidy over JSON-RPC on this port. Bound to localhost:
-# the API has no authentication, so it must not be reachable off-box.
-[http]
-enabled = true
-hostname = 127.0.0.1
-port = 6680
+path = sys.argv[1]
+config = configparser.ConfigParser()
+config.read(path)
 
-[youtube]
-enabled = true
+# Bound to localhost on purpose: the JSON-RPC API has no authentication,
+# so it must not be reachable off-box.
+if not config.has_section("http"):
+    config.add_section("http")
+config["http"]["enabled"] = "true"
+config["http"]["hostname"] = "127.0.0.1"
+config["http"]["port"] = "6680"
+
+# Only declare [youtube] when the extension is actually installed —
+# Mopidy refuses to start on config for an extension it doesn't have.
+try:
+    import mopidy_youtube  # noqa: F401
+    if not config.has_section("youtube"):
+        config.add_section("youtube")
+    config["youtube"]["enabled"] = "true"
+except ImportError:
+    pass
+
+with open(path, "w") as f:
+    config.write(f)
 CONF
-    ok "configured mopidy"
-  fi
-  sudo systemctl enable --now mopidy >/dev/null 2>&1 || warn "couldn't start mopidy"
-  # Give it a moment before the doctor pokes its RPC port.
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
+  ok "configured mopidy"
+
+  sudo systemctl enable --now mopidy >/dev/null 2>&1 || true
+  sudo systemctl restart mopidy >/dev/null 2>&1 || true
+
+  for _ in $(seq 1 15); do
     curl -fsS -m 1 -X POST http://localhost:6680/mopidy/rpc \
       -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1 && break
     sleep 1
@@ -113,7 +132,7 @@ CONF
       -d '{"jsonrpc":"2.0","id":1,"method":"core.get_version"}' >/dev/null 2>&1; then
     ok "mopidy responding"
   else
-    warn "mopidy not responding yet — check: journalctl -u mopidy -n 30"
+    warn "mopidy not responding — see: journalctl -u mopidy -n 30"
   fi
 fi
 

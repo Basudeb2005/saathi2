@@ -202,3 +202,52 @@ def test_poke_alone_does_not_reset_the_cap():
         c.advance(1.0)
         t.poke()
     assert t.expired is True
+
+
+# ---- the button --------------------------------------------------------
+
+def gate(clock=None, keys=None, debounce_s=0.6):
+    from saathi.button import PressGate
+    return PressGate(keys=keys if keys is not None else [], debounce_s=debounce_s,
+                     clock=clock or Clock())
+
+
+def test_a_key_down_is_a_press():
+    assert gate().consider("KEY_PLAYPAUSE", down=True) is not None
+
+
+def test_a_key_up_is_not():
+    assert gate().consider("KEY_PLAYPAUSE", down=False) is None
+
+
+def test_no_configured_keys_means_any_key():
+    """Right for a single-button remote: whatever it happens to send is
+    the press, and nobody should have to look that up first."""
+    assert gate().consider("KEY_ANYTHING", down=True) is not None
+
+
+def test_a_configured_key_excludes_the_others():
+    g = gate(keys=["KEY_PLAYPAUSE"])
+    assert g.consider("KEY_VOLUMEUP", down=True) is None
+    assert g.consider("KEY_PLAYPAUSE", down=True) is not None
+
+
+def test_key_matching_ignores_case():
+    assert gate(keys=["key_playpause"]).consider("KEY_PLAYPAUSE", down=True) is not None
+
+
+def test_a_bounce_is_not_a_second_press():
+    """Buttons bounce, and BLE remotes often send the press twice."""
+    c = Clock()
+    g = gate(c)
+    assert g.consider("KEY_A", down=True) is not None
+    c.advance(0.1)
+    assert g.consider("KEY_A", down=True) is None
+
+
+def test_a_deliberate_second_press_still_counts():
+    c = Clock()
+    g = gate(c)
+    g.consider("KEY_A", down=True)
+    c.advance(1.0)
+    assert g.consider("KEY_A", down=True) is not None

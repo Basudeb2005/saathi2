@@ -247,7 +247,31 @@ AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE")
 #   always    — connected from boot. No delay at all, and burns LiveKit
 #               minutes continuously — 1,000/month free is about 33
 #               minutes a day, so this will exhaust it in a fortnight.
+#   button    — a physical button, worn or on the table. No wake word to
+#               miss, nothing to hear over the music, and no microphone
+#               listening until someone asks for it — which is also the
+#               answer when a care facility asks about privacy.
 WAKE_MODE = os.getenv("WAKE_MODE", "wake_word").lower()
+
+# ---- Button ------------------------------------------------------------
+# Any BLE or USB device that presents as a keyboard: a $5 shutter remote,
+# or an ESP32 running the sketch in firmware/. Read through evdev, so the
+# software doesn't care which.
+#
+# Matched by name substring rather than /dev/input/eventN, because that
+# number changes when it reconnects.
+BUTTON_NAME = os.getenv("BUTTON_NAME", "")
+BUTTON_DEVICE = os.getenv("BUTTON_DEVICE", "")
+# Which key counts. Empty means any — right for a single-button remote,
+# where whatever it sends is the press.
+BUTTON_KEYS = [k.strip().upper() for k in os.getenv("BUTTON_KEYS", "").split(",") if k.strip()]
+# Ignore repeats inside this window. Buttons bounce, and BLE remotes
+# often send a press twice.
+BUTTON_DEBOUNCE_S = float(os.getenv("BUTTON_DEBOUNCE_S", "0.6"))
+# A press during a conversation ends it — the same button that starts a
+# session is how you stop the music, which is one thing to remember
+# rather than two.
+BUTTON_ENDS_SESSION = os.getenv("BUTTON_ENDS_SESSION", "true").lower() in ("1", "true", "yes")
 
 # For WAKE_MODE=voice: how loud, and for how long, before it counts as
 # someone talking rather than a door closing.

@@ -29,6 +29,9 @@ numpy
 # Restores stdlib `audioop`, removed in Python 3.13 (PEP 594).
 audioop-lts; python_version >= "3.13"
 
+# Button input (WAKE_MODE=button). apt's python3-evdev works too.
+evdev
+
 # Music + config
 requests
 python-dotenv

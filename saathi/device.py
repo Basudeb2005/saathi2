@@ -41,6 +41,7 @@ from saathi.config import (
     MUSIC_CHECK_INTERVAL_S,
     MUSIC_HOLDS_SESSION,
     MUSIC_SESSION_VOLUME,
+    BUTTON_ENDS_SESSION,
     VOICE_TRIGGER_MS,
     VOICE_TRIGGER_RMS,
     WAKE_MODE,
@@ -293,11 +294,21 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
     # echo cancellation there is nothing else to fall back on.
     previous_volume = await asyncio.to_thread(_duck_music)
 
+    stop_pressed = asyncio.Event()
+    watcher = None
+    if WAKE_MODE == "button" and BUTTON_ENDS_SESSION:
+        # The same button that starts a conversation is how you stop the
+        # music. One thing to remember rather than two, which matters
+        # more than it sounds for the person this is for.
+        watcher = asyncio.create_task(_watch_for_stop(stop_pressed))
+
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
     log.info("Listening — say something. Session ends after %.0fs of quiet.", SESSION_IDLE_TIMEOUT_S)
     try:
-        await _pump_mic(mic, source, timer, rtc, far_end)
+        await _pump_mic(mic, source, timer, rtc, far_end, stop_pressed)
     finally:
+        if watcher:
+            watcher.cancel()
         await asyncio.to_thread(_restore_music, previous_volume)
         _stop(mic)
         for task in mixer.values():
@@ -352,7 +363,23 @@ def _music_is_playing() -> bool:
         return False
 
 
-async def _pump_mic(mic, source, timer: IdleTimer, rtc, far_end: "FarEnd") -> None:
+async def _watch_for_stop(pressed: asyncio.Event) -> None:
+    """Set the flag on the next press, from a thread — evdev's read_loop
+    blocks, and blocking here would stall the audio it's meant to end."""
+    from saathi.button import wait_for_press
+
+    try:
+        if await asyncio.to_thread(wait_for_press):
+            log.info("Button pressed — ending the session")
+            pressed.set()
+    except Exception as e:
+        log.info("Stop watcher ended: %s", e)
+
+
+async def _pump_mic(
+    mic, source, timer: IdleTimer, rtc, far_end: "FarEnd",
+    stop_pressed: Optional[asyncio.Event] = None,
+) -> None:
     """Mic -> LiveKit, until the room goes quiet.
 
     The blocking read runs in a thread so it never stalls the event loop —
@@ -367,6 +394,10 @@ async def _pump_mic(mic, source, timer: IdleTimer, rtc, far_end: "FarEnd") -> No
     music_playing = False
 
     while True:
+        if stop_pressed is not None and stop_pressed.is_set():
+            log.info("Ending the session on a button press")
+            return
+
         if timer.expired:
             # Music keeps the session open so "stop" works without the
             # wake word — which it wouldn't, over a speaker playing music
@@ -544,6 +575,14 @@ def _wait_for_trigger() -> bool:
     if WAKE_MODE == "always":
         return True
 
+    if WAKE_MODE == "button":
+        from saathi.button import ButtonError, wait_for_press
+
+        try:
+            return wait_for_press()
+        except ButtonError as e:
+            raise DeviceError(str(e)) from e
+
     if WAKE_MODE == "voice":
         return wait_for_voice()
 
@@ -583,13 +622,27 @@ def _wake_engine():
 
 def run_forever() -> None:
     """Trigger -> conversation -> trigger, for as long as it's on."""
-    if WAKE_MODE not in ("wake_word", "voice", "always"):
-        raise DeviceError(f"WAKE_MODE must be wake_word, voice or always — got {WAKE_MODE!r}")
+    if WAKE_MODE not in ("wake_word", "voice", "always", "button"):
+        raise DeviceError(
+            f"WAKE_MODE must be wake_word, voice, button or always — got {WAKE_MODE!r}"
+        )
 
     if WAKE_MODE == "wake_word":
         _wake_engine()  # fail now, loudly, rather than on the first wake
         log.info("Saathi is listening for its wake word")
         print("Saathi is up. Say the wake word.", flush=True)
+    elif WAKE_MODE == "button":
+        from saathi.button import ButtonError, find_device
+        from saathi.config import BUTTON_DEVICE, BUTTON_NAME
+
+        # Fail now, with the device list, rather than on the first press.
+        try:
+            device = find_device(BUTTON_NAME, BUTTON_DEVICE)
+        except ButtonError as e:
+            raise DeviceError(str(e)) from e
+        log.info("Saathi starts on a button press")
+        print(f"Saathi is up. Press the button. ({device.name})", flush=True)
+
     elif WAKE_MODE == "voice":
         log.info("Saathi starts when it hears someone talking")
         print("Saathi is up. Just talk.", flush=True)

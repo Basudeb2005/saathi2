@@ -75,6 +75,26 @@ saathi/
   setup.py           the key prompt
 ```
 
+### One word
+
+```
+saathi          start it, and say where it is
+saathi talk     talk to it now — hold SPACE
+saathi status   what's running, what address
+saathi logs     follow it
+saathi doctor   check every moving part
+```
+
+`scripts/saathi` is a dispatcher over the things this repo can already
+do. It exists because the alternative is remembering which of
+`systemctl`, `journalctl`, a venv path and a `python -m` goes with which
+job, on a machine you touch every few days — and the failure mode of that
+is not looking.
+
+Bare `saathi` starts things rather than printing help, on purpose: the
+thing you want ninety percent of the time should be the thing that needs
+no argument.
+
 ### Two processes, on purpose
 
 `saathi.agent` is a LiveKit worker — the brain, waiting to be dispatched

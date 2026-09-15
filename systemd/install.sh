@@ -12,8 +12,19 @@ done
 sudo systemctl daemon-reload
 sudo systemctl enable --now "saathi-agent@$USER_NAME" "saathi@$USER_NAME"
 
-echo
-echo "Installed. Useful commands:"
-echo "  systemctl status  saathi@$USER_NAME"
-echo "  journalctl -fu    saathi@$USER_NAME"
-echo "  sudo systemctl restart saathi@$USER_NAME"
+# One word on the PATH, so none of the above has to be remembered.
+sudo ln -sf "$HERE/../scripts/saathi" /usr/local/bin/saathi
+sudo chmod +x "$HERE/../scripts/saathi"
+
+cat <<EOF
+
+Installed. From anywhere, now:
+
+  saathi           start it, and say where it is
+  saathi talk      talk to it now — hold SPACE
+  saathi status    what's running
+  saathi logs      follow the log
+  saathi doctor    check every moving part
+  saathi help      the rest
+
+EOF

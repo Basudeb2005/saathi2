@@ -177,5 +177,14 @@ echo
 read -rp "Start Saathi automatically on boot? [y/N] " REPLY
 case "$REPLY" in
   [yY]*) bash systemd/install.sh ;;
-  *) dim "skipped — run it yourself with: ./venv/bin/python -m saathi.device" ;;
+  *)
+    # Still put the command on the PATH. Not wanting it at boot is not
+    # the same as wanting to type the venv path for the rest of time.
+    sudo ln -sf "$PWD/scripts/saathi" /usr/local/bin/saathi 2>/dev/null || true
+    sudo chmod +x "$PWD/scripts/saathi" 2>/dev/null || true
+    dim "skipped boot — start it yourself with: saathi"
+    ;;
 esac
+
+echo
+echo "  Type  saathi  to start it, or  saathi talk  to talk to it now."

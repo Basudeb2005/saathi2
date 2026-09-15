@@ -457,6 +457,39 @@ The same setting works for the wearable — a BLE remote or the ESP32 in
 
 ---
 
+## The one word
+
+After any of the installers, `saathi` is on your PATH:
+
+| Type | Get |
+|---|---|
+| `saathi` | starts it, then says what's running and where |
+| `saathi talk` | talk to it now — hold SPACE, `q` to hang up |
+| `saathi status` | what's running, what address |
+| `saathi stop` / `restart` | the services |
+| `saathi logs` | follow it (`logs agent`, `logs console`) |
+| `saathi doctor` | check every moving part |
+| `saathi update` | git pull, then restart |
+| `saathi setup` | the API key wizard |
+| `saathi console` | install the bluetooth + web console |
+| `saathi token` | the key the web console wants |
+| `saathi ip` | just the address |
+| `saathi keys` | what a plugged-in keyboard actually sends |
+| `saathi calling` | guide / trunk / check / test |
+
+If it isn't there yet:
+
+```bash
+cd ~/saathi2 && sudo bash scripts/saathi install
+```
+
+`saathi talk` is the one to reach for when testing. It stops the
+background service first — it wants the same microphone, and ALSA will
+not share — starts the agent if it isn't up, and turns half-duplex off so
+you can interrupt a reply.
+
+---
+
 ## Re-running anything
 
 Nothing here is one-shot. If a step failed or you skipped it:

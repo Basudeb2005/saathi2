@@ -164,6 +164,13 @@ else
   note "Saathi's own units aren't installed yet — run: bash systemd/install.sh"
 fi
 
+# -------------------------------------------------------------------- cli
+# One word on the PATH. install-console.sh is often the first script
+# anyone runs on a fresh Pi, so it should leave `saathi` working even if
+# the other installers haven't been near it.
+sudo ln -sf "$HERE/scripts/saathi" /usr/local/bin/saathi
+sudo chmod +x "$HERE/scripts/saathi"
+
 # ------------------------------------------------------------------ token
 say "6/7  The key"
 sleep 2
@@ -197,7 +204,7 @@ cat <<EOF
   If it ever boots somewhere with no network it knows, it becomes one
   after 90 seconds. Join "Saathi-Setup" and open http://10.42.0.1:8765
 
-  Check on it:   systemctl status saathi-console@$USER_NAME
-  Watch it:      journalctl -fu saathi-console@$USER_NAME
+  Check on it:   saathi status
+  Watch it:      saathi logs console
 
 EOF

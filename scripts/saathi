@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# One word.
+#
+#   saathi            start everything, and say where it is
+#   saathi talk       talk to it right now, holding SPACE
+#   saathi status     what's running, what network, what address
+#
+# Everything else this project can do is a subcommand of that, because
+# the alternative — and what this replaces — is remembering which of
+# systemctl, journalctl, a venv path and a python -m goes with which
+# job, on a machine you only touch every few days.
+#
+# Bare `saathi` starts things rather than printing help on purpose. The
+# thing you want ninety percent of the time should be the thing that
+# needs no argument.
+set -uo pipefail
+
+# Resolve through symlinks: this normally runs as /usr/local/bin/saathi,
+# and the repo it belongs to is wherever that points.
+SELF="${BASH_SOURCE[0]}"
+while [[ -L "$SELF" ]]; do
+  LINK="$(readlink "$SELF")"
+  [[ "$LINK" == /* ]] && SELF="$LINK" || SELF="$(dirname "$SELF")/$LINK"
+done
+REPO="$(cd "$(dirname "$SELF")/.." && pwd)"
+PY="$REPO/venv/bin/python"
+
+# The units are templated per user (saathi@pi). When this is run with
+# sudo, the user who owns them is the one who typed it, not root.
+WHO="${SUDO_USER:-$(id -un)}"
+AGENT="saathi-agent@$WHO"
+DEVICE="saathi@$WHO"
+CONSOLE="saathi-console@$WHO"
+
+B=$'\033[1m'; DIM=$'\033[2m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; X=$'\033[0m'
+say()  { printf '%s%s%s\n' "$B" "$*" "$X"; }
+note() { printf '  %s\n' "$*"; }
+warn() { printf '  %s%s%s\n' "$Y" "$*" "$X"; }
+bad()  { printf '  %s%s%s\n' "$R" "$*" "$X"; }
+
+have_python() {
+  if [[ ! -x "$PY" ]]; then
+    bad "No virtualenv at $REPO/venv"
+    note "Run: cd $REPO && bash setup.sh"
+    exit 1
+  fi
+}
+
+unit_state() { systemctl is-active "$1" 2>/dev/null || true; }
+
+installed() { [[ -f /etc/systemd/system/saathi@.service ]]; }
+
+address() { hostname -I 2>/dev/null | awk '{print $1}'; }
+
+# ---------------------------------------------------------------- commands
+
+cmd_status() {
+  # Deliberately does not require the virtualenv. This is the command
+  # you run when something is wrong, and "no virtualenv" is one of the
+  # things that can be wrong — refusing to report the other five until
+  # that one is fixed is backwards.
+  local ip; ip="$(address)"
+  say "Saathi"
+  note "$(printf '%-15s %s' 'host' "$(hostname)")"
+  note "$(printf '%-15s %s' 'address' "${ip:-none}")"
+  [[ -x "$PY" ]] || warn "no virtualenv — run: cd $REPO && bash setup.sh"
+  for unit in "$AGENT" "$DEVICE" "$CONSOLE"; do
+    local state; state="$(unit_state "$unit")"
+    local label="${unit%@*}"
+    case "$state" in
+      active)   printf '  %-15s %srunning%s\n' "$label" "$G" "$X" ;;
+      inactive) printf '  %-15s %sstopped%s\n' "$label" "$DIM" "$X" ;;
+      failed)   printf '  %-15s %sfailed%s   (saathi logs %s)\n' "$label" "$R" "$X" "$label" ;;
+      *)        printf '  %-15s %snot installed%s\n' "$label" "$DIM" "$X" ;;
+    esac
+  done
+  if [[ -n "$ip" ]] && [[ "$(unit_state "$CONSOLE")" == "active" ]]; then
+    echo
+    note "phone: http://$ip:8765"
+  fi
+}
+
+cmd_start() {
+  have_python
+  if ! installed; then
+    warn "Services aren't installed yet — installing them now"
+    bash "$REPO/systemd/install.sh" || exit 1
+  fi
+  say "Starting"
+  # Agent first: the device joins a room and expects something to be
+  # waiting in it.
+  for unit in "$AGENT" "$DEVICE"; do
+    sudo systemctl start "$unit" && note "$unit"
+  done
+  [[ "$(unit_state "$CONSOLE")" == "unknown" ]] || sudo systemctl start "$CONSOLE" 2>/dev/null
+  # Long enough for a unit that is going to fail immediately to have
+  # done so, so the status below is the truth rather than optimism.
+  sleep 2
+  echo
+  cmd_status
+}
+
+cmd_stop() {
+  say "Stopping"
+  # Reverse of start: the thing holding the microphone goes first.
+  for unit in "$DEVICE" "$AGENT"; do
+    sudo systemctl stop "$unit" 2>/dev/null && note "$unit"
+  done
+  note "(the console stays up — it's how you get back in)"
+}
+
+cmd_restart() {
+  cmd_stop
+  echo
+  cmd_start
+}
+
+cmd_talk() {
+  have_python
+  say "Hold SPACE and talk"
+  # The service and this would fight over one microphone, and ALSA does
+  # not share. Stop it rather than producing "Device or resource busy"
+  # and letting you work out why.
+  if [[ "$(unit_state "$DEVICE")" == "active" ]]; then
+    note "stopping the background service first (it wants the same mic)"
+    sudo systemctl stop "$DEVICE"
+  fi
+  if [[ "$(unit_state "$AGENT")" != "active" ]]; then
+    note "starting the agent"
+    sudo systemctl start "$AGENT" 2>/dev/null
+    sleep 3
+  fi
+  echo
+  # HALF_DUPLEX off: push-to-talk already keeps the speaker out of the
+  # microphone, and with both on you cannot interrupt a reply.
+  cd "$REPO" || exit 1
+  WAKE_MODE=space HALF_DUPLEX=false exec "$PY" -m saathi.device
+}
+
+cmd_logs() {
+  local unit="$DEVICE"
+  case "${1:-}" in
+    agent)   unit="$AGENT" ;;
+    console) unit="$CONSOLE" ;;
+    ""|device|saathi) unit="$DEVICE" ;;
+    *) unit="$1" ;;
+  esac
+  say "$unit — ctrl-c to stop"
+  sudo journalctl -fu "$unit" -n 60
+}
+
+cmd_doctor()  { have_python; cd "$REPO" && exec "$PY" -m saathi.doctor; }
+cmd_setup()   { have_python; cd "$REPO" && exec "$PY" -m saathi.setup "$@"; }
+cmd_test()    { have_python; cd "$REPO" && exec "$PY" -m pytest tests -q; }
+cmd_keys()    { have_python; cd "$REPO" && exec "$PY" -m saathi.button; }
+cmd_calling() { have_python; cd "$REPO" && exec "$PY" -m saathi.calling.cli "$@"; }
+
+cmd_update() {
+  say "Updating"
+  cd "$REPO" || exit 1
+  git pull --ff-only || { bad "Pull failed — you have local changes"; exit 1; }
+  have_python
+  "$PY" -m pip install -q -r requirements.txt 2>/dev/null
+  if installed; then
+    sudo systemctl daemon-reload
+    note "restarting"
+    sudo systemctl restart "$AGENT" "$DEVICE" 2>/dev/null
+  fi
+  echo
+  cmd_status
+}
+
+cmd_console() { bash "$REPO/scripts/install-console.sh"; }
+
+cmd_token() {
+  if [[ -r /etc/saathi/console-token ]]; then
+    cat /etc/saathi/console-token
+  else
+    sudo cat /etc/saathi/console-token 2>/dev/null \
+      || { bad "No token — the console isn't installed. Run: saathi console"; exit 1; }
+  fi
+}
+
+cmd_ip() {
+  local ip; ip="$(address)"
+  if [[ -z "$ip" ]]; then
+    bad "No address — this Pi isn't on a network."
+    note "Ask it over Bluetooth, or run: saathi console"
+    exit 1
+  fi
+  echo "$ip"
+}
+
+cmd_install() {
+  local target=/usr/local/bin/saathi
+  sudo ln -sf "$REPO/scripts/saathi" "$target"
+  sudo chmod +x "$REPO/scripts/saathi"
+  say "Installed"
+  note "$target -> $REPO/scripts/saathi"
+  note "Now just type: saathi"
+}
+
+cmd_help() {
+  cat <<EOF
+${B}saathi${X}              start it, and say where it is
+${B}saathi talk${X}         talk to it now — hold SPACE, q to hang up
+${B}saathi status${X}       what's running, what address
+${B}saathi stop${X}         / restart
+${B}saathi logs${X}         follow the log      (logs agent | logs console)
+${B}saathi doctor${X}       check every moving part
+${B}saathi update${X}       git pull, then restart
+${B}saathi setup${X}        the API key wizard
+${B}saathi test${X}         run the test suite
+${B}saathi console${X}      install the bluetooth + web console
+${B}saathi token${X}        the key the web console wants
+${B}saathi ip${X}           just the address
+${B}saathi keys${X}         what a plugged-in keyboard actually sends
+${B}saathi calling${X}      calling setup: guide / trunk / check / test
+EOF
+}
+
+case "${1:-}" in
+  ""|up|start)   cmd_start ;;
+  talk|ptt)      cmd_talk ;;
+  status|st)     cmd_status ;;
+  stop)          cmd_stop ;;
+  restart)       cmd_restart ;;
+  logs|log)      shift; cmd_logs "$@" ;;
+  doctor|check)  cmd_doctor ;;
+  setup)         shift; cmd_setup "$@" ;;
+  test|tests)    cmd_test ;;
+  update|pull)   cmd_update ;;
+  console)       cmd_console ;;
+  token)         cmd_token ;;
+  ip|addr)       cmd_ip ;;
+  keys|button)   cmd_keys ;;
+  calling|call)  shift; cmd_calling "$@" ;;
+  install)       cmd_install ;;
+  help|-h|--help) cmd_help ;;
+  *)             bad "No such command: $1"; echo; cmd_help; exit 1 ;;
+esac

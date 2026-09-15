@@ -33,6 +33,9 @@ from saathi.config import (
     LANGUAGE_NAMES,
     MEMORY_RECALL_LIMIT,
     HALF_DUPLEX,
+    LOG_LATENCY,
+    PREEMPTIVE_GENERATION,
+    TURN_ENDPOINTING_S,
     DEEPGRAM_STT_MODEL,
     OPENAI_STT_MODEL,
     OPENAI_TTS_MODEL,
@@ -400,6 +403,63 @@ def _build_tts():
     return openai.TTS(**kwargs)
 
 
+def _turn_options() -> dict:
+    """Latency settings, in whatever shape this version of the SDK takes.
+
+    LiveKit moved these from flat keyword arguments into a
+    TurnHandlingOptions object, keeping the old names as deprecated
+    aliases — so the same code can't be written once for both. Rather
+    than pinning a version and finding out on the Pi, ask the signature
+    what it accepts.
+    """
+    import inspect
+
+    wanted = {
+        "min_endpointing_delay": TURN_ENDPOINTING_S,
+        "preemptive_generation": PREEMPTIVE_GENERATION,
+        # With half-duplex the microphone is muted while the agent
+        # talks, so anything that "interrupts" is the room, not the
+        # user — and letting it cut the reply off mid-sentence every few
+        # seconds is exactly what makes the box feel broken.
+        "allow_interruptions": not HALF_DUPLEX,
+    }
+
+    try:
+        from livekit.agents.voice import TurnHandlingOptions  # type: ignore
+
+        if "turn_handling" in inspect.signature(AgentSession.__init__).parameters:
+            accepted = set(inspect.signature(TurnHandlingOptions).parameters)
+            return {"turn_handling": TurnHandlingOptions(
+                **{k: v for k, v in wanted.items() if k in accepted}
+            )}
+    except Exception:
+        pass
+
+    accepted = set(inspect.signature(AgentSession.__init__).parameters)
+    return {k: v for k, v in wanted.items() if k in accepted}
+
+
+def _watch_latency(session) -> None:
+    """Log where each turn's seconds went.
+
+    Attached rather than built in because it is the one thing that turns
+    "it's slow" into a number. LiveKit has been measuring this all along
+    and emitting it at an event nothing was listening to.
+    """
+    if not LOG_LATENCY:
+        return
+
+    from saathi.latency import Latency
+
+    meter = Latency()
+
+    @session.on("metrics_collected")
+    def _on_metrics(event):
+        # The payload has been both the metrics object itself and a
+        # wrapper with .metrics on it, depending on the version.
+        meter.collect(getattr(event, "metrics", event))
+
+
 def prewarm(proc: agents.JobProcess) -> None:
     """Load everything slow before a job arrives.
 
@@ -431,12 +491,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         llm=openai.LLM(model=LLM_MODEL, temperature=LLM_TEMPERATURE),
         tts=_build_tts(),
         vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
-        # With half-duplex the microphone is muted while the agent talks,
-        # so anything that "interrupts" is the room, not the user — and
-        # letting it cut the reply off mid-sentence every few seconds is
-        # exactly what makes the box feel broken.
-        allow_interruptions=not HALF_DUPLEX,
+        **_turn_options(),
     )
+    _watch_latency(session)
 
     await session.start(
         room=ctx.room,

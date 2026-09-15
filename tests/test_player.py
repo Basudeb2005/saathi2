@@ -186,3 +186,32 @@ def test_a_corrupt_cache_file_is_survivable(tmp_path):
     path = tmp_path / "cache.json"
     path.write_text("{ this is not json")
     assert SongCache(path=path).get("anything") is None
+
+
+# ---- yt-dlp staleness ---------------------------------------------------
+
+def test_a_fresh_ytdlp_is_not_stale():
+    import datetime
+
+    from saathi.music.cli import _ytdlp_is_stale
+
+    today = datetime.date.today()
+    assert _ytdlp_is_stale(f"{today:%Y.%m.%d}") is False
+
+
+def test_an_old_ytdlp_is_stale():
+    """YouTube changes something every few weeks and every yt-dlp older
+    than the change stops extracting — silently, as "no results" or a
+    track that loads and plays nothing."""
+    from saathi.music.cli import _ytdlp_is_stale
+
+    assert _ytdlp_is_stale("2023.07.06") is True
+
+
+def test_a_version_that_is_not_a_date_is_not_judged():
+    """A distro build, or a future scheme. Guessing "stale" would send
+    people to update something that was never the problem."""
+    from saathi.music.cli import _ytdlp_is_stale
+
+    for version in ("", "unknown", "2025.9", "nightly", "2024.13.45"):
+        assert _ytdlp_is_stale(version) is False

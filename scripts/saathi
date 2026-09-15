@@ -186,6 +186,27 @@ cmd_test()    { have_python; cd "$REPO" && exec "$PY" -m pytest tests -q; }
 cmd_keys()    { have_python; cd "$REPO" && exec "$PY" -m saathi.button; }
 cmd_calling() { have_python; cd "$REPO" && exec "$PY" -m saathi.calling.cli "$@"; }
 
+cmd_music() {
+  have_python
+  cd "$REPO" || exit 1
+  # No argument means the question people actually have, which is never
+  # "show me the subcommands" — it's "why isn't there any music".
+  [[ $# -eq 0 ]] && set -- check
+  exec "$PY" -m saathi.music.cli "$@"
+}
+
+cmd_slow() {
+  have_python
+  say "Where the time goes"
+  note "Talk to it a few times, then read the 'turn' lines:"
+  note "  turn  eou 0.51  stt 1.92  llm 0.88  tts 0.71  = 4.02s"
+  note "The biggest number is the thing to fix. Usually stt."
+  echo
+  sudo journalctl -u "$DEVICE" -u "$AGENT" -n 2000 --no-pager 2>/dev/null \
+    | grep -E "turn  eou|slow turn" | tail -25 \
+    || note "Nothing measured yet — talk to it first."
+}
+
 cmd_update() {
   say "Updating"
   cd "$REPO" || exit 1
@@ -311,6 +332,8 @@ ${B}saathi token${X}        the key the web console wants
 ${B}saathi ip${X}           just the address
 ${B}saathi mic${X}          who is holding the microphone (mic free to take it)
 ${B}saathi keys${X}         what a plugged-in keyboard actually sends
+${B}saathi music${X}        why there's no music (music update fixes most of it)
+${B}saathi slow${X}         where each turn's seconds went
 ${B}saathi calling${X}      calling setup: guide / trunk / check / test
 ${B}saathi which${X}        when \`saathi\` isn't doing what this says it should
 EOF
@@ -333,6 +356,8 @@ case "${1:-}" in
   keys|button)   cmd_keys ;;
   mic)           shift; cmd_mic "$@" ;;
   calling|call)  shift; cmd_calling "$@" ;;
+  music)         shift; cmd_music "$@" ;;
+  slow|latency)  cmd_slow ;;
   install)       cmd_install ;;
   which|where)   cmd_which ;;
   help|-h|--help) cmd_help ;;

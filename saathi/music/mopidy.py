@@ -110,6 +110,21 @@ class MopidyClient:
         """One of "playing", "paused", "stopped"."""
         return self._call("core.playback.get_state")
 
+    def time_position(self) -> int:
+        """Milliseconds into the current track.
+
+        The only honest test of whether sound is actually being made.
+        Mopidy 3 on GStreamer 1.26 reports state "playing" for a track
+        whose position never moves — which is exactly what "it says it's
+        playing and I can't hear anything" is, and no other check can
+        tell the two apart.
+        """
+        return self._call("core.playback.get_time_position") or 0
+
+    def version(self) -> str:
+        """Mopidy's own version, for telling 3 from 4."""
+        return self._call("core.get_version") or "unknown"
+
     def current_track_name(self) -> Optional[str]:
         """Best-effort "Artist - Title" for confirmations. Returns None
         rather than raising when nothing is loaded -- not knowing the

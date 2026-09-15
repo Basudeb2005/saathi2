@@ -448,3 +448,30 @@ HOTSPOT_AFTER_S = int(os.getenv("HOTSPOT_AFTER_S", "90"))
 # And how long to stay one before trying the real networks again, so a
 # router that was merely slow to boot doesn't strand the Pi in setup mode.
 HOTSPOT_RETRY_AFTER_S = int(os.getenv("HOTSPOT_RETRY_AFTER_S", "600"))
+
+
+# ---- Latency ------------------------------------------------------------
+# Measure before changing any of this. `saathi talk` logs a line per turn:
+#
+#     turn  eou 0.51  stt 1.92  llm 0.88  tts 0.71  = 4.02s before it speaks
+#
+# and the biggest number is the thing to fix. It is almost always stt.
+
+# How long after you stop talking before it decides you have. Pure
+# waiting — nothing is computed during it.
+#
+# With push-to-talk this can be short, because releasing the key sends
+# silence immediately and there is no ambiguity about whether you have
+# finished. Without it, short means being cut off every time you pause
+# for breath, which for an elderly speaker is often.
+TURN_ENDPOINTING_S = float(os.getenv("TURN_ENDPOINTING_S", "0.2" if WAKE_MODE in ("button", "space") else "0.5"))
+
+# Start the model on the transcript before the endpointing delay has
+# finished running out, and throw the work away if the person turns out
+# to still be talking. Costs a few wasted tokens, saves most of a second
+# on every turn.
+PREEMPTIVE_GENERATION = os.getenv("PREEMPTIVE_GENERATION", "true").lower() in ("1", "true", "yes")
+
+# Log the per-turn breakdown. Cheap, and the only way "it's slow" turns
+# into something you can act on.
+LOG_LATENCY = os.getenv("LOG_LATENCY", "true").lower() in ("1", "true", "yes")

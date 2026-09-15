@@ -525,6 +525,92 @@ Nothing here is one-shot. If a step failed or you skipped it:
 | `python -m saathi.calling.cli check` | what calling still needs |
 | `python -m saathi.calling.cli guide` | walk calling again from the top |
 
+### It's slow
+
+Measure before changing anything. Every turn logs where its seconds went:
+
+```
+turn  eou 0.51  stt 1.92  llm 0.88  tts 0.71  = 4.02s before it speaks
+```
+
+```bash
+saathi slow         # the last 25 turns
+```
+
+- **eou** — how long after you stopped talking before it decided you had.
+  Pure waiting. With push-to-talk it should be small; `TURN_ENDPOINTING_S`
+  is the dial.
+- **stt** — transcribing. **Usually the biggest number, and usually
+  fixable.** OpenAI's STT is not a streaming model: it waits for your
+  whole sentence, uploads it, and waits for the answer. Deepgram streams
+  and returns the transcript ~200ms after you stop.
+
+  ```
+  STT_PROVIDER=deepgram
+  DEEPGRAM_API_KEY=...        # console.deepgram.com, $200 free credit
+  ```
+
+  ```bash
+  ./venv/bin/pip install "livekit-agents[deepgram]"
+  ```
+
+  This is typically 1–2 seconds a turn, and it is also better at Indian
+  languages and at code-switching mid-sentence — `nova-3` in `multi` mode
+  is the only one of the three that does that properly.
+- **llm** — time to the first token, not the whole reply; the rest streams
+  into the speech as it plays.
+- **tts** — time to the first byte of audio. After this it's talking.
+
+Two settings that cost nothing:
+
+```
+PREEMPTIVE_GENERATION=true   # start the model before the pause is over
+TURN_ENDPOINTING_S=0.2       # safe with push-to-talk, not without
+```
+
+`TURN_ENDPOINTING_S` already defaults to 0.2 in button and space modes,
+because releasing the key removes any doubt about whether you've
+finished. In wake-word mode it stays at 0.5 — shorter means cutting
+people off every time they pause for breath, which for an elderly speaker
+is often.
+
+---
+
+### No music, or "playing" with no sound
+
+```bash
+saathi music          # walks the whole chain and names the broken link
+```
+
+It checks, in the order they have to work: Mopidy is reachable, its
+version isn't the broken one, the YouTube backend loaded, yt-dlp isn't
+stale, radio search works, a song search returns results, and — the one
+that matters — that playback position actually *moves*.
+
+That last check is the only honest test. Mopidy 3 on GStreamer 1.26
+reports `playing` for a track whose position never advances, which is
+exactly what "it says it's playing and I can't hear anything" is.
+
+**The usual fix, by a distance:**
+
+```bash
+saathi music update
+```
+
+YouTube changes something every few weeks and every yt-dlp older than the
+change stops extracting — silently. The symptom is "I couldn't find a
+song called X", or a track that loads and plays nothing. Neither points
+at yt-dlp.
+
+If songs by name never work but radio does, the YouTube backend didn't
+load:
+
+```bash
+journalctl -u mopidy-venv -n 40 | grep -i youtube
+```
+
+---
+
 ### "Device or resource busy"
 
 Only one process gets the capture device, and there are three that

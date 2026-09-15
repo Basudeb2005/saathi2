@@ -100,3 +100,26 @@ def test_a_timeout_does_not_claim_mopidy_is_down():
     session = FakeSession([requests.Timeout("slow")])
     with pytest.raises(MopidyError, match="in time"):
         MopidyClient(session=session).search_tracks("lata")
+
+
+# ---- position and version ----------------------------------------------
+
+def test_time_position_is_the_only_honest_playback_test():
+    """Mopidy 3 on GStreamer 1.26 says "playing" for a track whose
+    position never moves. Nothing else can tell that apart from sound
+    actually coming out of the speaker."""
+    assert client([rpc_ok(4200)]).time_position() == 4200
+
+
+def test_time_position_when_nothing_is_loaded():
+    """Mopidy returns null, and comparing two of those is a TypeError in
+    the caller sampling it twice."""
+    assert client([rpc_ok(None)]).time_position() == 0
+
+
+def test_version():
+    assert client([rpc_ok("4.0.4")]).version() == "4.0.4"
+
+
+def test_version_when_mopidy_does_not_say():
+    assert client([rpc_ok(None)]).version() == "unknown"

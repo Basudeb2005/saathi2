@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from saathi.logging_setup import quiet_console
 from saathi.config import (
@@ -96,15 +96,28 @@ def check_mic_exists() -> Result:
     return Result(OK, f"{len(cards)} capture device(s)")
 
 
-def _record(device: Optional[str], seconds: int = 1) -> bytes:
+def _record(device: Optional[str], seconds: int = 1) -> Tuple[bytes, str]:
+    """Audio, and whatever arecord complained about.
+
+    The complaint used to be thrown away, which turned "Device or
+    resource busy" — a specific, fixable problem with a named cause —
+    into "recorded nothing on any device", and sent people to alsamixer
+    to fix a mixer that was never the problem.
+    """
     cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
            "-d", str(seconds), "-t", "raw"]
     if device:
         cmd += ["-D", device]
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=15 + seconds).stdout
-    except Exception:
-        return b""
+        done = subprocess.run(cmd, capture_output=True, timeout=15 + seconds)
+        return done.stdout, (done.stderr or b"").decode("utf-8", "replace").strip()
+    except Exception as e:
+        return b"", str(e)
+
+
+def _busy(complaint: str) -> bool:
+    lowered = complaint.lower()
+    return "resource busy" in lowered or "device busy" in lowered
 
 
 def _capture_cards() -> List[int]:
@@ -137,14 +150,30 @@ def check_mic_hears() -> Result:
     """
     import audioop
 
-    pcm = _record(WAKE_CAPTURE_DEVICE)
+    from saathi import mic as mic_module
+
+    pcm, complaint = _record(WAKE_CAPTURE_DEVICE)
+
+    # Checked before anything else: a busy device is not a quiet one, and
+    # every other branch below sends you to alsamixer to fix a mixer that
+    # was never the problem.
+    if _busy(complaint):
+        holders = mic_module.holders()
+        who = ", ".join(str(h) for h in holders) or "something this user can't see"
+        ours = [h for h in holders if h.ours]
+        return Result(
+            FAIL, f"the microphone is in use by {who}",
+            "saathi mic free" if ours or not holders else "stop it, then run this again",
+        )
 
     if not pcm or audioop.rms(pcm, 2) < 20:
         for card in _capture_cards():
             candidate = f"plughw:{card},0"
             if candidate == WAKE_CAPTURE_DEVICE:
                 continue
-            probe = _record(candidate)
+            probe, probe_complaint = _record(candidate)
+            if _busy(probe_complaint):
+                continue
             if probe and audioop.rms(probe, 2) >= 20:
                 return Result(
                     FAIL,
@@ -153,8 +182,11 @@ def check_mic_hears() -> Result:
                 )
 
     if not pcm:
+        detail = "recorded nothing on any device"
+        if complaint:
+            detail += f" — arecord said: {complaint.splitlines()[0][:90]}"
         return Result(
-            FAIL, "recorded nothing on any device",
+            FAIL, detail,
             "is the mic plugged in? check `arecord -l`, and `alsamixer` F4 -> raise Capture",
         )
 

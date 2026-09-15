@@ -474,6 +474,7 @@ After any of the installers, `saathi` is on your PATH:
 | `saathi console` | install the bluetooth + web console |
 | `saathi token` | the key the web console wants |
 | `saathi ip` | just the address |
+| `saathi mic` | who is holding the microphone (`saathi mic free` takes it back) |
 | `saathi keys` | what a plugged-in keyboard actually sends |
 | `saathi calling` | guide / trunk / check / test |
 
@@ -508,6 +509,23 @@ Nothing here is one-shot. If a step failed or you skipped it:
 | `sudo cat /etc/saathi/console-token` | the web console's key |
 | `python -m saathi.calling.cli check` | what calling still needs |
 | `python -m saathi.calling.cli guide` | walk calling again from the top |
+
+### "Device or resource busy"
+
+Only one process gets the capture device, and there are three that
+legitimately want it: the background service, a conversation you started
+by hand, and whatever you ran to test the microphone.
+
+```bash
+saathi mic          # who has it
+saathi mic free     # take it back
+```
+
+`saathi talk` and `saathi doctor` both do this for you now. If `saathi
+mic` shows something that isn't Saathi's — a browser, a conferencing app
+— it will say so and leave it alone.
+
+---
 
 ## When something doesn't work
 

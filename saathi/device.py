@@ -180,9 +180,46 @@ def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
     if device:
         cmd += ["-D", device]
     try:
-        return subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        # stderr captured rather than left on the terminal: the one thing
+        # it ever says is "Device or resource busy", and on its own that
+        # is four words with no name attached. Held, so _check_mic_started
+        # can turn it into a sentence that names the process.
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError as e:
         raise DeviceError("arecord not found — install alsa-utils") from e
+
+
+def _mic_died(proc: subprocess.Popen) -> Optional[str]:
+    """Why arecord gave up, if it has. None while it's running.
+
+    Checked before the first read rather than after: a busy device kills
+    arecord immediately, and without this the session carries on to
+    "mic produced nothing for 15s", which is the same symptom as a
+    muted microphone and sends you to the wrong place entirely.
+    """
+    if proc.poll() is None:
+        return None
+
+    complaint = ""
+    if proc.stderr is not None:
+        try:
+            complaint = proc.stderr.read().decode("utf-8", "replace").strip()
+        except Exception:
+            complaint = ""
+
+    lowered = complaint.lower()
+    if "resource busy" in lowered or "device busy" in lowered:
+        try:
+            from saathi.mic import holders
+
+            who = ", ".join(str(h) for h in holders())
+        except Exception:
+            who = ""
+        return (
+            f"The microphone is already in use{f' by {who}' if who else ''}. "
+            "Free it with:  saathi mic free"
+        )
+    return complaint or "arecord exited immediately"
 
 
 def _spawn_aplay(sample_rate: int, channels: int) -> subprocess.Popen:
@@ -304,6 +341,15 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
         watcher = asyncio.create_task(_watch_for_stop(stop_pressed))
 
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
+    # A tenth of a second is plenty for ALSA to refuse, and is not worth
+    # noticing when it doesn't.
+    time.sleep(0.1)
+    died = _mic_died(mic)
+    if died:
+        _stop(mic)
+        await room.disconnect()
+        raise DeviceError(died)
+
     # In push-to-talk the microphone is closed until someone holds the
     # key, so the "listening" line below would be a lie.
     ptt = _ptt()

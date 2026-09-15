@@ -115,16 +115,36 @@ cmd_restart() {
   cmd_start
 }
 
+# Free the microphone, whoever has it.
+#
+# This used to stop saathi@$WHO and hope. If the unit was installed under
+# a different user, or not templated at all, the stop quietly did nothing
+# and the next thing to open the device got "Device or resource busy" —
+# so it guessed wrong and then said nothing about having guessed. Now it
+# asks the kernel who actually holds it.
+free_mic() {
+  local held
+  held="$("$PY" -m saathi.mic 2>/dev/null)"
+  [[ "$held" == Nothing* ]] && return 0
+
+  note "the microphone is in use — freeing it"
+  sudo "$PY" -m saathi.mic --free 2>/dev/null | sed 's/^/  /'
+  # ALSA does not release the device the instant the process dies.
+  sleep 1
+}
+
+cmd_mic() {
+  have_python
+  case "${1:-}" in
+    free|stop) sudo "$PY" -m saathi.mic --free ;;
+    *)         sudo "$PY" -m saathi.mic ;;
+  esac
+}
+
 cmd_talk() {
   have_python
   say "Hold SPACE and talk"
-  # The service and this would fight over one microphone, and ALSA does
-  # not share. Stop it rather than producing "Device or resource busy"
-  # and letting you work out why.
-  if [[ "$(unit_state "$DEVICE")" == "active" ]]; then
-    note "stopping the background service first (it wants the same mic)"
-    sudo systemctl stop "$DEVICE"
-  fi
+  free_mic
   if [[ "$(unit_state "$AGENT")" != "active" ]]; then
     note "starting the agent"
     sudo systemctl start "$AGENT" 2>/dev/null
@@ -149,7 +169,14 @@ cmd_logs() {
   sudo journalctl -fu "$unit" -n 60
 }
 
-cmd_doctor()  { have_python; cd "$REPO" && exec "$PY" -m saathi.doctor; }
+cmd_doctor() {
+  have_python
+  # The mic check opens the capture device, so a running Saathi makes it
+  # fail — and "your microphone is broken" is a bad thing to be told by
+  # a box that is at that moment successfully listening to you.
+  free_mic
+  cd "$REPO" && exec "$PY" -m saathi.doctor
+}
 cmd_setup()   { have_python; cd "$REPO" && exec "$PY" -m saathi.setup "$@"; }
 cmd_test()    { have_python; cd "$REPO" && exec "$PY" -m pytest tests -q; }
 cmd_keys()    { have_python; cd "$REPO" && exec "$PY" -m saathi.button; }
@@ -214,6 +241,7 @@ ${B}saathi test${X}         run the test suite
 ${B}saathi console${X}      install the bluetooth + web console
 ${B}saathi token${X}        the key the web console wants
 ${B}saathi ip${X}           just the address
+${B}saathi mic${X}          who is holding the microphone (mic free to take it)
 ${B}saathi keys${X}         what a plugged-in keyboard actually sends
 ${B}saathi calling${X}      calling setup: guide / trunk / check / test
 EOF
@@ -234,6 +262,7 @@ case "${1:-}" in
   token)         cmd_token ;;
   ip|addr)       cmd_ip ;;
   keys|button)   cmd_keys ;;
+  mic)           shift; cmd_mic "$@" ;;
   calling|call)  shift; cmd_calling "$@" ;;
   install)       cmd_install ;;
   help|-h|--help) cmd_help ;;

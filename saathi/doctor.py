@@ -327,6 +327,29 @@ def check_wake_models() -> Result:
     return Result(OK, f"{WAKE_ENGINE} loads")
 
 
+def check_clock() -> Result:
+    """The Pi's timezone, because the agent greets people by it.
+
+    A fresh Raspberry Pi OS image is UTC. In Singapore that is eight
+    hours out, so the box wishes someone good morning at six in the
+    evening — which is a small thing that instantly gives away that
+    nobody is really there.
+    """
+    from datetime import datetime
+
+    now = datetime.now()
+    zone = now.astimezone().tzname() or "?"
+    offset = now.astimezone().utcoffset()
+    stamp = f"{now:%a %-d %b %-I:%M %p} {zone}"
+
+    if offset is None or offset.total_seconds() == 0:
+        return Result(
+            WARN, f"{stamp} — looks like UTC, so greetings will be hours out",
+            "sudo timedatectl set-timezone Asia/Singapore   (or your own)",
+        )
+    return Result(OK, stamp)
+
+
 def check_memory() -> Result:
     from saathi.config import AGENT_LANGUAGES, LANGUAGE_NAMES, MEMORY_BACKEND
     from saathi.memory import build_memory
@@ -372,6 +395,7 @@ CHECKS: List[Check] = [
     Check("Mopidy", check_mopidy),
     Check("Radio Browser", check_radio),
     Check("Wake word", check_wake_models),
+    Check("Clock", check_clock),
     Check("Memory & language", check_memory, optional=True),
     Check("Calling", check_calling, optional=True),
 ]

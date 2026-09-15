@@ -300,6 +300,56 @@ a session" is still to do.
 
 ---
 
+## 7. Push-to-talk on the spacebar
+
+The wake word is the weakest part of the box: it has to be heard over a
+speaker playing music a foot away, with no echo cancellation. A button
+doesn't. Before committing to hardware, try the same interaction with
+the keyboard you already have.
+
+```bash
+./venv/bin/python -m saathi.keyboard
+```
+
+Hold **space**. The bar should stay solid the whole time you hold it and
+empty about a second after you let go. If it flickers, or only flashes
+once no matter how long you hold, your key repeat is off — set
+`PTT_STYLE=toggle` and tap to open, tap to close.
+
+Then run the box itself in this mode:
+
+```bash
+WAKE_MODE=space ./venv/bin/python -m saathi.device
+```
+
+Hold space, talk, let go. Enter sends immediately without waiting out
+the release window; `q` or escape hangs up; ctrl-c quits.
+
+Two things to know:
+
+- **It needs a terminal.** Under systemd stdin is `/dev/null` and there
+  is nothing to read, so this mode is for running in the foreground. Stop
+  the service first: `sudo systemctl stop saathi`.
+- **It works over ssh**, which `WAKE_MODE=button` does not — evdev reads
+  the Pi's own input devices, and your keyboard is attached to your
+  laptop.
+
+Turn **`HALF_DUPLEX=false`** while you're in this mode, in `.env`, and
+restart the agent too. Half-duplex exists to stop the mic hearing the
+speaker; push-to-talk already does that, better, by keeping the mic shut
+unless someone is holding the key. With both on you can't interrupt a
+reply even by holding space — which is the one thing push-to-talk was
+supposed to buy you.
+
+A terminal sends no key-up event, so "held" is inferred from key repeat:
+a key counts as down for `PTT_RELEASE_S` (1 second) after the last
+character arrived. That has to be wider than your system's repeat delay
+— about half a second on macOS — or the mic closes in the gap before the
+repeats start. The visible cost is a one-second tail after you let go,
+which clips nothing.
+
+---
+
 ## Re-running anything
 
 Nothing here is one-shot. If a step failed or you skipped it:
@@ -311,7 +361,8 @@ Nothing here is one-shot. If a step failed or you skipped it:
 | `python -m saathi.setup --list` | show the sections |
 | `python -m saathi.setup --only calling` | just the trunk ids |
 | `python -m saathi.setup --only openai` | just that key |
-| `python -m saathi.doctor` | check all six parts, with fixes |
+| `python -m saathi.doctor` | check every part, with fixes |
+| `python -m saathi.keyboard` | check push-to-talk before wiring it to audio |
 | `python -m saathi.calling.cli check` | what calling still needs |
 | `python -m saathi.calling.cli guide` | walk calling again from the top |
 

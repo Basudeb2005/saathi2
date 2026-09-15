@@ -62,6 +62,8 @@ saathi/
     base.py          what a memory backend must do — swap the vendor freely
     supermemory.py   the first implementation
   wake.py            on-device wake word (openWakeWord or Porcupine)
+  button.py          a worn or table button, over evdev — the real answer
+  keyboard.py        the spacebar as that button, over ssh, for testing
   device.py          the Pi in its own room: mic in, speaker out
   doctor.py          check all six moving parts before blaming the code
   setup.py           the key prompt
@@ -256,8 +258,38 @@ Being straight about this, because the gap matters:
   `create_sip_participant` call in `calling/sip.py`. They're written
   against LiveKit Agents 1.x — check the field names against the version
   pip actually resolves before assuming a typo is a bug in your config.
-- **Not built yet**: wake word. The agent currently responds to anyone in
-  the room. openWakeWord is the intended piece here.
+- **Not built yet**: hardware echo cancellation, which is what actually
+  fixes barge-in. Push-to-talk (`WAKE_MODE=button`, or `WAKE_MODE=space`
+  to try it without hardware) sidesteps it rather than solving it.
+
+### Not sounding like a machine
+
+The first version of the prompt was fifteen rules and no person, and it
+produced exactly what you would expect from that: *"I have started
+playback of your requested station."* Correct, useless. The things that
+actually moved it:
+
+- **A character rather than constraints.** `INSTRUCTIONS` in `agent.py`
+  now describes someone — how they open, what they do when the person
+  sounds low, what they never say — instead of listing prohibitions. A
+  model told "be natural" isn't; a model told "never open with *Sure!*,
+  never close with *anything else I can help with?*" is, because those
+  are the actual tells.
+- **Delivery, not just words.** `gpt-4o-mini-tts` takes a plain-English
+  direction and acts on it, and `OPENAI_TTS_INSTRUCTIONS` is the single
+  biggest lever on the robot impression — more than the model, more than
+  the prompt. The default asks for pauses at full stops, falling pitch at
+  the end of sentences, and clear final consonants, which is what an
+  older listener in a room with a fan needs.
+- **Temperature.** At 0.2 the same question gets the same sentence every
+  time. Someone who talks to this box every day hears that repetition
+  long before they hear anything else, so the default is 0.7.
+- **The time of day.** The prompt carries the local time in words, so the
+  greeting fits the hour. Without it the box says good morning at nine at
+  night — which is why `doctor` now checks the Pi's timezone, since a
+  fresh image is UTC.
+- **`gpt-4.1` over `gpt-4o`.** Not for knowledge — for holding the
+  character. 4o drifts back into assistant register after a few turns.
 
 ### Three things that will bite
 

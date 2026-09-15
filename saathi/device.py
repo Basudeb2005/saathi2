@@ -303,10 +303,18 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
         watcher = asyncio.create_task(_watch_for_stop(stop_pressed))
 
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
-    log.info("Listening — say something. Session ends after %.0fs of quiet.", SESSION_IDLE_TIMEOUT_S)
+    # In space mode the microphone is closed until someone holds the key,
+    # so the "listening" line below would be a lie.
+    ptt = _keyboard() if WAKE_MODE == "space" else None
+    if ptt is None:
+        log.info("Listening — say something. Session ends after %.0fs of quiet.", SESSION_IDLE_TIMEOUT_S)
+    else:
+        print("  [hold SPACE to talk, enter to send, q to hang up]", flush=True)
     try:
-        await _pump_mic(mic, source, timer, rtc, far_end, stop_pressed)
+        await _pump_mic(mic, source, timer, rtc, far_end, stop_pressed, ptt)
     finally:
+        if ptt is not None:
+            ptt.release()
         if watcher:
             watcher.cancel()
         await asyncio.to_thread(_restore_music, previous_volume)
@@ -379,6 +387,7 @@ async def _watch_for_stop(pressed: asyncio.Event) -> None:
 async def _pump_mic(
     mic, source, timer: IdleTimer, rtc, far_end: "FarEnd",
     stop_pressed: Optional[asyncio.Event] = None,
+    ptt=None,
 ) -> None:
     """Mic -> LiveKit, until the room goes quiet.
 
@@ -396,6 +405,10 @@ async def _pump_mic(
     while True:
         if stop_pressed is not None and stop_pressed.is_set():
             log.info("Ending the session on a button press")
+            return
+
+        if ptt is not None and ptt.take_quit():
+            log.info("Ending the session on a keypress")
             return
 
         if timer.expired:
@@ -427,12 +440,22 @@ async def _pump_mic(
             log.warning("Mic stream ended")
             return
 
-        if HALF_DUPLEX and far_end.speaking:
-            # Publish silence rather than stopping: the track staying live
-            # keeps the far end's turn detection from treating a dropped
-            # stream as us hanging up.
+        # Two independent reasons to send silence, and both publish it
+        # rather than stopping: the track staying live keeps the far
+        # end's turn detection from treating a dropped stream as us
+        # hanging up.
+        holding = ptt is None or ptt.open
+        if not holding:
+            pcm = b"\x00" * FRAME_BYTES
+        elif HALF_DUPLEX and far_end.speaking:
             pcm = b"\x00" * FRAME_BYTES
         elif is_speech(pcm):
+            timer.poke()
+
+        if holding and ptt is not None:
+            # Holding the key counts as activity even while thinking of
+            # what to say. Otherwise a long pause mid-sentence hangs up
+            # on someone who is visibly still talking.
             timer.poke()
 
         await source.capture_frame(
@@ -583,6 +606,9 @@ def _wait_for_trigger() -> bool:
         except ButtonError as e:
             raise DeviceError(str(e)) from e
 
+    if WAKE_MODE == "space":
+        return _keyboard().wait_for_press()
+
     if WAKE_MODE == "voice":
         return wait_for_voice()
 
@@ -606,6 +632,24 @@ def _wait_for_trigger() -> bool:
     return True
 
 
+_KEYBOARD = None
+
+
+def _keyboard():
+    """Opened once and left open. The terminal is put into character-at-a-
+    time mode to read it, and doing that per conversation means racing the
+    shell for the terminal every few minutes."""
+    global _KEYBOARD
+    if _KEYBOARD is None:
+        from saathi.keyboard import Keyboard, KeyboardError
+
+        try:
+            _KEYBOARD = Keyboard().start()
+        except KeyboardError as e:
+            raise DeviceError(str(e)) from e
+    return _KEYBOARD
+
+
 _ENGINE = None
 
 
@@ -622,9 +666,10 @@ def _wake_engine():
 
 def run_forever() -> None:
     """Trigger -> conversation -> trigger, for as long as it's on."""
-    if WAKE_MODE not in ("wake_word", "voice", "always", "button"):
+    if WAKE_MODE not in ("wake_word", "voice", "always", "button", "space"):
         raise DeviceError(
-            f"WAKE_MODE must be wake_word, voice, button or always — got {WAKE_MODE!r}"
+            f"WAKE_MODE must be wake_word, voice, button, space or always — "
+            f"got {WAKE_MODE!r}"
         )
 
     if WAKE_MODE == "wake_word":
@@ -642,6 +687,27 @@ def run_forever() -> None:
             raise DeviceError(str(e)) from e
         log.info("Saathi starts on a button press")
         print(f"Saathi is up. Press the button. ({device.name})", flush=True)
+
+    elif WAKE_MODE == "space":
+        from saathi.config import PTT_STYLE
+
+        _keyboard()   # fail now, with the reason, rather than on the first press
+        log.info("Saathi starts on the spacebar (%s)", PTT_STYLE)
+        if PTT_STYLE == "toggle":
+            print("Saathi is up. Tap SPACE to talk, tap again to stop.", flush=True)
+        else:
+            print("Saathi is up. Hold SPACE to talk.", flush=True)
+        print("  q or escape hangs up. ctrl-c quits.", flush=True)
+        if HALF_DUPLEX:
+            # Push-to-talk already solves what half-duplex was for — the
+            # mic is shut unless someone is holding the key — and with
+            # both on you cannot interrupt a reply even by holding it.
+            print(
+                "  note: HALF_DUPLEX=true, so you can't interrupt it mid-reply.\n"
+                "        set HALF_DUPLEX=false in .env (and restart the agent) for barge-in;\n"
+                "        push-to-talk keeps the echo out on its own.",
+                flush=True,
+            )
 
     elif WAKE_MODE == "voice":
         log.info("Saathi starts when it hears someone talking")
@@ -675,6 +741,11 @@ def main() -> int:
     except DeviceError as e:
         print(f"error: {e}")
         return 1
+    finally:
+        # Without this, ctrl-c out of space mode leaves the shell with no
+        # echo — which looks exactly like the ssh session having hung.
+        if _KEYBOARD is not None:
+            _KEYBOARD.stop()
 
 
 if __name__ == "__main__":

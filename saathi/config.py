@@ -54,11 +54,18 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 STT_PROVIDER = os.getenv("STT_PROVIDER", "openai").lower()    # openai | deepgram
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "openai").lower()    # openai | elevenlabs
 
-# gpt-4o rather than gpt-4o-mini. Mini loses the thread on anything
-# compound — "put on something cheerful and tell me what time my
-# daughter called" — and for a companion, understanding beats the few
-# cents a day the smaller model saves.
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
+# gpt-4.1 rather than gpt-4o. On a companion the difference isn't
+# knowledge, it's instruction-following: 4o drifts back to assistant
+# register — "I have started playback of your requested station" — a
+# few turns after being told to talk like a person, and 4.1 holds the
+# character. It is also what the LiveKit plugin itself now defaults to.
+# If your account doesn't have it, LLM_MODEL=gpt-4o still works.
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1")
+# Warm rather than precise. At 0.2 the same question gets the same
+# sentence every time, which is the single clearest tell that there is a
+# machine on the other end — someone who talks to this box daily hears
+# the repetition long before they hear anything else.
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 # gpt-4o-transcribe over whisper-1: markedly better on accented English
 # and on Indian languages, which is most of what this box will hear.
 OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-transcribe")
@@ -68,7 +75,32 @@ DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
 # quicker still and much better in Hindi and Tamil — worth the extra key
 # once English is working.
 OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
-OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "shimmer")
+# coral rather than shimmer. shimmer is bright and young and reads every
+# sentence like an announcement; coral sits lower and slower and sounds
+# like someone in the room. Others worth trying: sage (calm), ballad
+# (gentle), alloy (neutral), onyx (low, male).
+OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "coral")
+
+# How the voice should be delivered — gpt-4o-mini-tts takes a plain
+# English direction and acts on it, and this is the biggest single lever
+# on "it sounds like a robot". Older tts-1 models ignore it, so it is
+# only sent when the model supports it.
+#
+# Written for the listener, not the speaker: an eighty-year-old in a
+# room with a fan running needs consonants and pauses far more than they
+# need personality.
+OPENAI_TTS_INSTRUCTIONS = os.getenv(
+    "OPENAI_TTS_INSTRUCTIONS",
+    "Speak like a warm, unhurried friend sitting in the same room as an older "
+    "person. Calm and low, never bright or announcer-like. Leave a small pause "
+    "at commas and a real one at full stops. Land consonants clearly at the "
+    "ends of words. Let the pitch fall at the end of a sentence instead of "
+    "rising. Never sound like you are reading something out.",
+)
+# Slightly under natural pace. Below about 0.9 it stops sounding careful
+# and starts sounding slurred, which is worse than fast.
+TTS_SPEED = float(os.getenv("TTS_SPEED", "0.95"))
+
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
 # ---- Mopidy ------------------------------------------------------------
@@ -251,7 +283,30 @@ AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE")
 #               miss, nothing to hear over the music, and no microphone
 #               listening until someone asks for it — which is also the
 #               answer when a care facility asks about privacy.
+#   space     — hold the spacebar in the terminal you started it from.
+#               The same push-to-talk behaviour as the button, over SSH,
+#               with no hardware — so you can test the wearable's
+#               ergonomics before the wearable exists.
 WAKE_MODE = os.getenv("WAKE_MODE", "wake_word").lower()
+
+# ---- Push-to-talk over the terminal (WAKE_MODE=space) -------------------
+# A terminal has no key-up event: holding a key sends the character once,
+# pauses for the system's repeat delay, then sends a fast stream of
+# repeats, and sends nothing at all when you let go. So "held" has to
+# mean "a keypress arrived within the last PTT_RELEASE_S", and that
+# window has to be wider than the repeat delay or the mic closes in the
+# gap before the repeats start. macOS defaults to about 0.5s; 1.0 covers
+# it with room to spare. The cost is a tail of the same length after you
+# actually release, which clips nothing — it only holds the mic open a
+# moment longer.
+PTT_RELEASE_S = float(os.getenv("PTT_RELEASE_S", "1.0"))
+# "hold" needs key repeat switched on. If yours is off (macOS
+# ApplePressAndHoldEnabled, or a terminal that swallows repeats), set
+# "toggle": tap space to open the mic, tap again to close it.
+PTT_STYLE = os.getenv("PTT_STYLE", "hold").lower()   # hold | toggle
+# Ignore a second tap this soon after the first. Only used by "toggle" —
+# without it key repeat flips the mic open and shut thirty times a second.
+PTT_TOGGLE_DEBOUNCE_S = float(os.getenv("PTT_TOGGLE_DEBOUNCE_S", "0.5"))
 
 # ---- Button ------------------------------------------------------------
 # Any BLE or USB device that presents as a keyboard: a $5 shutter remote,
@@ -283,6 +338,13 @@ VOICE_TRIGGER_MS = int(os.getenv("VOICE_TRIGGER_MS", "300"))
 # it, and replies to itself — which is what "it's talking gibberish"
 # actually is. Muting the mic while the agent speaks breaks that loop.
 # The cost is barge-in: you can't interrupt it mid-sentence.
+#
+# Turn this OFF when you're using push-to-talk (WAKE_MODE=button or
+# space). Push-to-talk solves the same problem better — the microphone is
+# shut unless someone is deliberately holding the key, so there is no
+# open mic for the speaker to leak into — and with both on you can't
+# interrupt a reply even by holding the key down, which is the one thing
+# push-to-talk was supposed to buy you.
 HALF_DUPLEX = os.getenv("HALF_DUPLEX", "true").lower() in ("1", "true", "yes")
 # Keep muted this long after the last sound from the far end, to cover
 # the speaker's own decay and the room's reverb tail.

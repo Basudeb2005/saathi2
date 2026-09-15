@@ -363,3 +363,31 @@ def test_hello_says_so_when_there_is_no_address():
     payload = json.loads(console({"addr show": system.Output(True, "")}).dispatch("hello").text)
     assert payload["ip"] is None
     assert payload["token"] == "tok"
+
+
+# ---- "am I online" ------------------------------------------------------
+
+def test_online_with_an_address():
+    assert netwatch.online(Recorder({"addr show": system.Output(True, ADDRS)})) is True
+
+
+def test_offline_with_none():
+    assert netwatch.online(Recorder({"addr show": system.Output(True, "")})) is False
+
+
+def test_a_broken_ip_command_counts_as_online():
+    """The two ways of being wrong are not equal. Guessing "offline" tears
+    down a working connection on a machine you may only be able to reach
+    over that connection; guessing "online" only delays a hotspot on a Pi
+    that is genuinely stranded."""
+    assert netwatch.online(Recorder({"addr show": system.Output(False, "ip: not found")})) is True
+
+
+def test_a_hotspot_never_comes_up_while_there_is_an_address():
+    """The guarantee that matters: this can only ever act on a Pi that has
+    no network, so it cannot take a working one away."""
+    clock = Clock()
+    d = netwatch.Decider(90, 600, clock=clock)
+    for _ in range(200):
+        clock.advance(30)
+        assert d.decide(online=True, hotspot=False) != netwatch.UP

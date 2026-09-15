@@ -96,8 +96,19 @@ def online(runner: system.Runner = system.run) -> bool:
     A house whose broadband is down still has a working wifi network, and
     dropping that for a hotspot would take the Pi off the only network
     the phone is on — making a bad afternoon worse.
+
+    "Couldn't ask" counts as online. If `ip` is missing or errors, the
+    honest state is unknown, and the two ways of being wrong are not
+    equal: assuming offline tears down a working connection on a machine
+    you may only be able to reach over it, while assuming online costs
+    nothing but a delayed hotspot on a Pi that is genuinely stranded.
     """
-    return bool(system.addresses(runner))
+    result = runner(["ip", "-4", "-o", "addr", "show"])
+    if not result.ok:
+        log.warning("Couldn't read this Pi's addresses (%s) — assuming it's fine",
+                    result.text or "no output")
+        return True
+    return bool(system.parse_addresses(result.text))
 
 
 def watch(runner: system.Runner = system.run, interval_s: float = 15.0,

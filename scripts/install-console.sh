@@ -39,17 +39,49 @@ fi
 
 # --------------------------------------------------------- network manager
 say "2/7  NetworkManager"
+# The wifi commands (scan, join, hotspot) all go through nmcli, so this
+# is a real requirement. But starting NetworkManager is also the single
+# most dangerous thing in this script: on a Pi you can only reach over
+# the network, taking over the interface it is reachable on is how an
+# install script locks you out of the machine it is installing on.
+#
+# So it never switches managers by itself. If dhcpcd owns the interface,
+# it stops and says what to do — because that decision wants a keyboard
+# in front of the Pi, not a script running over ssh.
 if systemctl is-active --quiet NetworkManager; then
   note "running"
+elif systemctl is-active --quiet dhcpcd 2>/dev/null; then
+  cat >&2 <<'EOF'
+
+  STOPPING HERE, on purpose.
+
+  dhcpcd is managing this Pi's network, not NetworkManager. Starting
+  NetworkManager now would put two managers on one wifi card, and the
+  usual result is that the Pi drops off the network — which, if you are
+  reading this over ssh, means you have just lost it.
+
+  Raspberry Pi OS switched to NetworkManager in Bookworm. If this is an
+  older image, the safe move is to do the switch yourself, at the Pi,
+  with a keyboard attached:
+
+      sudo systemctl disable --now dhcpcd
+      sudo systemctl enable  --now NetworkManager
+      sudo reboot
+
+  Then run this script again.
+
+  Everything else here (Bluetooth, the console, the boot services) works
+  fine without NetworkManager — you just won't be able to change wifi
+  networks from your phone. To install those and skip this check:
+
+      SKIP_NM_CHECK=1 bash scripts/install-console.sh
+
+EOF
+  [[ "${SKIP_NM_CHECK:-}" == "1" ]] || exit 1
+  note "SKIP_NM_CHECK=1 — carrying on without NetworkManager"
 else
-  # Raspberry Pi OS moved to NetworkManager in Bookworm. On an older
-  # image dhcpcd owns the interface and the two fight, so this is worth
-  # being loud about rather than silently enabling both.
-  note "not running — enabling it"
-  if systemctl is-enabled --quiet dhcpcd 2>/dev/null; then
-    note "WARNING: dhcpcd is enabled too. Two managers on one interface will"
-    note "         fight. Consider: sudo systemctl disable --now dhcpcd"
-  fi
+  # Installed but not started, and nothing else is holding the interface.
+  note "installed but not running — starting it"
   sudo systemctl enable --now NetworkManager
 fi
 

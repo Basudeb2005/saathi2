@@ -75,6 +75,22 @@ saathi/
   setup.py           the key prompt
 ```
 
+### It doesn't need the Pi to develop
+
+The conversation runs on a laptop — `saathi/audio.py` picks ALSA on Linux
+and sox on a Mac, and both speak raw 16-bit PCM on a pipe, which is the
+whole contract. See [DEVELOPING.md](DEVELOPING.md).
+
+What stays on the Pi is what should: the button (evdev), the console
+(RFCOMM, nmcli, systemd), and knowing who holds the microphone (`/proc`).
+Those are all about being a device in someone's front room, and there is
+nothing to iterate on there from a laptop.
+
+The thing a laptop will lie to you about is audio. Three of the worst
+bugs in this project — the echo loop, the double-`aplay` underrun, the
+wake word drowned by the speaker a foot away — only exist in a room with
+one microphone and one loudspeaker and no echo cancellation.
+
 ### One word
 
 ```

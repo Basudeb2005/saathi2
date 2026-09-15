@@ -173,20 +173,22 @@ class IdleTimer:
 # ---- audio i/o ----------------------------------------------------------
 
 def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
-    cmd = [
-        "arecord", "-q", "-f", "S16_LE",
-        "-r", str(DEVICE_SAMPLE_RATE), "-c", "1", "-t", "raw",
-    ]
-    if device:
-        cmd += ["-D", device]
+    from saathi.audio import AudioError, capture_command, device_env, require
+
+    try:
+        backend = require()
+    except AudioError as e:
+        raise DeviceError(str(e)) from e
+    cmd = capture_command(device, DEVICE_SAMPLE_RATE, backend)
     try:
         # stderr captured rather than left on the terminal: the one thing
         # it ever says is "Device or resource busy", and on its own that
         # is four words with no name attached. Held, so _check_mic_started
         # can turn it into a sentence that names the process.
-        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=device_env(device, backend))
     except FileNotFoundError as e:
-        raise DeviceError("arecord not found — install alsa-utils") from e
+        raise DeviceError(f"{cmd[0]} not found — {backend.install}") from e
 
 
 def _mic_died(proc: subprocess.Popen) -> Optional[str]:
@@ -223,14 +225,19 @@ def _mic_died(proc: subprocess.Popen) -> Optional[str]:
 
 
 def _spawn_aplay(sample_rate: int, channels: int) -> subprocess.Popen:
-    cmd = ["aplay", "-q", "-f", "S16_LE", "-r", str(sample_rate), "-c", str(channels)]
-    if AUDIO_OUTPUT_DEVICE:
-        cmd += ["-D", AUDIO_OUTPUT_DEVICE]
+    from saathi.audio import AudioError, device_env, playback_command, require
+
+    try:
+        backend = require()
+    except AudioError as e:
+        raise DeviceError(str(e)) from e
+    cmd = playback_command(AUDIO_OUTPUT_DEVICE, sample_rate, channels, backend)
     log.info("Playback: %s", " ".join(cmd))
     try:
-        return subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                                env=device_env(AUDIO_OUTPUT_DEVICE, backend))
     except FileNotFoundError as e:
-        raise DeviceError("aplay not found — install alsa-utils") from e
+        raise DeviceError(f"{cmd[0]} not found — {backend.install}") from e
 
 
 def _access_token() -> str:

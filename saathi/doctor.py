@@ -73,10 +73,20 @@ def check_env() -> Result:
 
 
 def check_tools() -> Result:
-    missing = [t for t in ("arecord", "aplay") if not shutil.which(t)]
-    if missing:
-        return Result(FAIL, f"missing {', '.join(missing)}", "sudo apt install alsa-utils")
-    return Result(OK, "arecord and aplay present")
+    """Something that can record and something that can play.
+
+    Not "arecord and aplay" any more: the conversation runs on a laptop
+    too, and a Mac has neither and doesn't need them.
+    """
+    from saathi.audio import ALSA, detect
+
+    backend = detect()
+    if backend is None:
+        import platform as _platform
+
+        hint = "brew install sox" if _platform.system() == "Darwin" else ALSA.install
+        return Result(FAIL, f"no way to record or play on {_platform.system()}", hint)
+    return Result(OK, f"{backend.record} and {backend.play} ({backend.name})")
 
 
 def check_mic_exists() -> Result:
@@ -104,13 +114,26 @@ def _record(device: Optional[str], seconds: int = 1) -> Tuple[bytes, str]:
     into "recorded nothing on any device", and sent people to alsamixer
     to fix a mixer that was never the problem.
     """
-    cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
-           "-d", str(seconds), "-t", "raw"]
-    if device:
-        cmd += ["-D", device]
+    from saathi.audio import ALSA, capture_command, detect, device_env
+
+    backend = detect()
+    if backend is None:
+        return b"", "no audio backend"
+
+    cmd = capture_command(device, 16000, backend)
+    # Every backend spells "stop after N seconds" differently, and none
+    # of them is worth a branch in audio.py for one caller: the timeout
+    # below ends it either way.
+    if backend is ALSA:
+        cmd += ["-d", str(seconds)]
     try:
-        done = subprocess.run(cmd, capture_output=True, timeout=15 + seconds)
+        done = subprocess.run(cmd, capture_output=True, timeout=seconds + 2,
+                              env=device_env(device, backend))
         return done.stdout, (done.stderr or b"").decode("utf-8", "replace").strip()
+    except subprocess.TimeoutExpired as e:
+        # sox and ffmpeg record until killed, so this is the normal path
+        # for them — the audio captured before the timeout is the sample.
+        return (e.stdout or b""), ""
     except Exception as e:
         return b"", str(e)
 

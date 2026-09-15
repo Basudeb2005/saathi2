@@ -302,14 +302,16 @@ def _stop(proc: subprocess.Popen) -> None:
 
 
 def _spawn_arecord(device: Optional[str]) -> subprocess.Popen:
-    cmd = ["arecord", "-q", "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw"]
-    if device:
-        cmd += ["-D", device]
+    from saathi.audio import capture_command, device_env, require
+
+    backend = require()
+    cmd = capture_command(device, SAMPLE_RATE, backend)
     log.info("Opening mic: %s", " ".join(cmd))
     try:
-        return subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                env=device_env(device, backend))
     except FileNotFoundError as e:
-        raise WakeWordError("arecord not found — install alsa-utils") from e
+        raise WakeWordError(f"{cmd[0]} not found — {backend.install}") from e
 
 
 class _MusicDucker:

@@ -27,16 +27,30 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # The runner has an Android SDK, but not necessarily the platform
-      # and build-tools this compileSdk wants.
-      - uses: android-actions/setup-android@v3
+      # Deliberately not android-actions/setup-android: it installs the
+      # obsolete "tools" package, which was removed from Google's
+      # repository, so it fails before the build starts. The runner
+      # already ships an SDK — all that is missing is accepted licences
+      # and the platform this compileSdk asks for.
+      - name: Android SDK
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          # The cmdline-tools directory is versioned and the version
+          # moves, so find it rather than naming it.
+          SDKMANAGER="$(find "$SDK/cmdline-tools" -name sdkmanager -type f | head -1)"
+          echo "using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
       - name: Build
-        run: gradle --project-dir android assembleDebug --no-daemon
+        run: gradle --project-dir android assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:

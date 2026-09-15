@@ -484,6 +484,21 @@ If it isn't there yet:
 cd ~/saathi2 && sudo bash scripts/saathi install
 ```
 
+**If `saathi talk` answers with "unrecognized arguments: talk"**, something
+else on your machine is called `saathi` — usually a shell alias left over
+from earlier setup instructions, which beats anything on the PATH without
+telling you:
+
+```bash
+type -a saathi      # see what your shell actually runs
+unalias saathi      # if that's what it is
+hash -r             # if bash cached an older path
+```
+
+`saathi which` prints where the real one lives. It can't see your aliases
+— the shell resolves those before the script exists — which is why
+`type -a` is the question to ask.
+
 `saathi talk` is the one to reach for when testing. It stops the
 background service first — it wants the same microphone, and ALSA will
 not share — starts the agent if it isn't up, and turns half-duplex off so

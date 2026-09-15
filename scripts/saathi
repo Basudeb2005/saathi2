@@ -224,7 +224,49 @@ cmd_install() {
   sudo chmod +x "$REPO/scripts/saathi"
   say "Installed"
   note "$target -> $REPO/scripts/saathi"
-  note "Now just type: saathi"
+
+  # A shell alias beats anything on the PATH, silently. Earlier setup
+  # instructions in this project suggested aliasing `saathi` to the key
+  # wizard, and someone who followed them gets `saathi talk` answered by
+  # argparse with "unrecognized arguments: talk" — which names neither
+  # the alias nor the file it is shadowing.
+  local shadowed=0
+  local rc
+  for rc in "$HOME/.bashrc" "$HOME/.bash_aliases" "$HOME/.profile"             "$HOME/.zshrc" "/home/$WHO/.bashrc" "/home/$WHO/.bash_aliases"; do
+    [[ -r "$rc" ]] || continue
+    if grep -qE '^[[:space:]]*(alias[[:space:]]+saathi=|saathi[[:space:]]*\(\))' "$rc"; then
+      shadowed=1
+      echo
+      warn "An alias in $rc shadows this — the PATH never gets a look in:"
+      grep -nE '^[[:space:]]*(alias[[:space:]]+saathi=|saathi[[:space:]]*\(\))' "$rc"         | sed 's/^/      /'
+    fi
+  done
+
+  if (( shadowed )); then
+    echo
+    note "To fix, in this shell:        unalias saathi"
+    note "And permanently, delete those lines from the file above."
+    note "Then check with:              type -a saathi"
+  else
+    echo
+    note "Now just type: saathi"
+    note "If the old one answers, your shell has cached it — run: hash -r"
+  fi
+}
+
+cmd_which() {
+  # For when `saathi` is not doing what this file says it should. There
+  # is no way to see an alias from inside a script — the shell resolves
+  # it before this process exists — so the honest answer is to print
+  # where the real one is and how to ask the shell what it used.
+  say "This file"
+  note "$(cd "$(dirname "$SELF")" && pwd)/$(basename "$SELF")"
+  note "repo: $REPO"
+  note "on the PATH: $(command -v saathi || echo 'not installed — run: sudo bash scripts/saathi install')"
+  echo
+  say "What your shell will actually run"
+  note "Run this yourself — a script cannot see its caller's aliases:"
+  note "    type -a saathi"
 }
 
 cmd_help() {
@@ -244,6 +286,7 @@ ${B}saathi ip${X}           just the address
 ${B}saathi mic${X}          who is holding the microphone (mic free to take it)
 ${B}saathi keys${X}         what a plugged-in keyboard actually sends
 ${B}saathi calling${X}      calling setup: guide / trunk / check / test
+${B}saathi which${X}        when \`saathi\` isn't doing what this says it should
 EOF
 }
 
@@ -265,6 +308,7 @@ case "${1:-}" in
   mic)           shift; cmd_mic "$@" ;;
   calling|call)  shift; cmd_calling "$@" ;;
   install)       cmd_install ;;
+  which|where)   cmd_which ;;
   help|-h|--help) cmd_help ;;
   *)             bad "No such command: $1"; echo; cmd_help; exit 1 ;;
 esac

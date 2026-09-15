@@ -82,6 +82,10 @@ cmd_status() {
 
 cmd_start() {
   have_python
+  # Says which file is talking. The whole confusion above was a different
+  # program answering to this name, and the only cure is for the real one
+  # to say where it lives.
+  printf '%ssaathi%s %s%s%s\n' "$B" "$X" "$DIM" "$REPO" "$X"
   if ! installed; then
     warn "Services aren't installed yet — installing them now"
     bash "$REPO/systemd/install.sh" || exit 1
@@ -225,17 +229,38 @@ cmd_install() {
   say "Installed"
   note "$target -> $REPO/scripts/saathi"
 
-  # A shell alias beats anything on the PATH, silently. Earlier setup
-  # instructions in this project suggested aliasing `saathi` to the key
-  # wizard, and someone who followed them gets `saathi talk` answered by
-  # argparse with "unrecognized arguments: talk" — which names neither
-  # the alias nor the file it is shadowing.
+  # Another file called saathi, earlier on the PATH, wins silently.
+  #
+  # Debian puts ~/bin and ~/.local/bin *before* /usr/local/bin, so a
+  # script left in either by some earlier setup beats this symlink and
+  # there is no clue that it has: you get a program that looks like it
+  # might be this one, answering with messages this one never prints.
   local shadowed=0
+  local first=""
+  local dir
+  for dir in "/home/$WHO/bin" "/home/$WHO/.local/bin" /usr/local/sbin              /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+    [[ -x "$dir/saathi" ]] || continue
+    [[ -z "$first" ]] && first="$dir/saathi"
+    if [[ "$(readlink -f "$dir/saathi")" != "$(readlink -f "$REPO/scripts/saathi")" ]]; then
+      echo
+      warn "A different program is also called saathi: $dir/saathi"
+      # The shebang identifies nothing; the line after it usually does.
+      note "  $(grep -m1 -v '^#!' "$dir/saathi" 2>/dev/null | cut -c1-90)"
+      if [[ "$dir/saathi" == "$first" ]]; then
+        bad "  and it comes FIRST on the PATH, so it is the one that runs."
+        note "  Move it aside:   mv $dir/saathi $dir/saathi.old"
+        shadowed=1
+      fi
+    fi
+  done
+
+  local shadowed_by_alias=0
   local rc
   for rc in "$HOME/.bashrc" "$HOME/.bash_aliases" "$HOME/.profile"             "$HOME/.zshrc" "/home/$WHO/.bashrc" "/home/$WHO/.bash_aliases"; do
     [[ -r "$rc" ]] || continue
     if grep -qE '^[[:space:]]*(alias[[:space:]]+saathi=|saathi[[:space:]]*\(\))' "$rc"; then
       shadowed=1
+      shadowed_by_alias=1
       echo
       warn "An alias in $rc shadows this — the PATH never gets a look in:"
       grep -nE '^[[:space:]]*(alias[[:space:]]+saathi=|saathi[[:space:]]*\(\))' "$rc"         | sed 's/^/      /'
@@ -244,9 +269,10 @@ cmd_install() {
 
   if (( shadowed )); then
     echo
-    note "To fix, in this shell:        unalias saathi"
-    note "And permanently, delete those lines from the file above."
+    (( shadowed_by_alias )) && note "To fix, in this shell:        unalias saathi"
     note "Then check with:              type -a saathi"
+    note "Until it's sorted, this always works, whatever the PATH says:"
+    note "    bash $REPO/scripts/saathi"
   else
     echo
     note "Now just type: saathi"

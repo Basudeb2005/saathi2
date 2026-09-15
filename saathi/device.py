@@ -773,7 +773,7 @@ def run_forever() -> None:
     elif WAKE_MODE == "space":
         from saathi.config import PTT_STYLE
 
-        _keyboard()   # fail now, with the reason, rather than on the first press
+        _ptt()   # fail now, with the reason, rather than on the first press
         log.info("Saathi starts on the spacebar (%s)", PTT_STYLE)
         if PTT_STYLE == "toggle":
             print("Saathi is up. Tap SPACE to talk, tap again to stop.", flush=True)

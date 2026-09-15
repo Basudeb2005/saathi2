@@ -1,4 +1,4 @@
-"""
+r"""
 Everything this needs from the operating system, in one place.
 
 It is all shelling out — `nmcli`, `systemctl`, `ip`, `journalctl` — because

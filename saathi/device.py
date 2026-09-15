@@ -42,6 +42,7 @@ from saathi.config import (
     MUSIC_HOLDS_SESSION,
     MUSIC_SESSION_VOLUME,
     BUTTON_ENDS_SESSION,
+    BUTTON_PUSH_TO_TALK,
     VOICE_TRIGGER_MS,
     VOICE_TRIGGER_RMS,
     WAKE_MODE,
@@ -296,16 +297,16 @@ async def run_session(room_name: str = SAATHI_ROOM_NAME) -> None:
 
     stop_pressed = asyncio.Event()
     watcher = None
-    if WAKE_MODE == "button" and BUTTON_ENDS_SESSION:
+    if WAKE_MODE == "button" and BUTTON_ENDS_SESSION and not BUTTON_PUSH_TO_TALK:
         # The same button that starts a conversation is how you stop the
         # music. One thing to remember rather than two, which matters
         # more than it sounds for the person this is for.
         watcher = asyncio.create_task(_watch_for_stop(stop_pressed))
 
     mic = _spawn_arecord(WAKE_CAPTURE_DEVICE)
-    # In space mode the microphone is closed until someone holds the key,
-    # so the "listening" line below would be a lie.
-    ptt = _keyboard() if WAKE_MODE == "space" else None
+    # In push-to-talk the microphone is closed until someone holds the
+    # key, so the "listening" line below would be a lie.
+    ptt = _ptt()
     if ptt is None:
         log.info("Listening — say something. Session ends after %.0fs of quiet.", SESSION_IDLE_TIMEOUT_S)
     else:
@@ -598,16 +599,19 @@ def _wait_for_trigger() -> bool:
     if WAKE_MODE == "always":
         return True
 
+    if WAKE_MODE == "space":
+        return _ptt().wait_for_press()
+
     if WAKE_MODE == "button":
+        if BUTTON_PUSH_TO_TALK:
+            return _ptt().wait_for_press()
+
         from saathi.button import ButtonError, wait_for_press
 
         try:
             return wait_for_press()
         except ButtonError as e:
             raise DeviceError(str(e)) from e
-
-    if WAKE_MODE == "space":
-        return _keyboard().wait_for_press()
 
     if WAKE_MODE == "voice":
         return wait_for_voice()
@@ -635,19 +639,38 @@ def _wait_for_trigger() -> bool:
 _KEYBOARD = None
 
 
-def _keyboard():
-    """Opened once and left open. The terminal is put into character-at-a-
-    time mode to read it, and doing that per conversation means racing the
-    shell for the terminal every few minutes."""
-    global _KEYBOARD
-    if _KEYBOARD is None:
-        from saathi.keyboard import Keyboard, KeyboardError
+def _ptt():
+    """The push-to-talk handle for this mode, or None if it isn't one.
 
-        try:
-            _KEYBOARD = Keyboard().start()
-        except KeyboardError as e:
-            raise DeviceError(str(e)) from e
-    return _KEYBOARD
+    Two implementations, one shape. `saathi.button.PushToTalk` reads a
+    key on the Pi through evdev — a wearable, or a USB keyboard — and
+    works headless under systemd. `saathi.keyboard.Keyboard` reads the
+    terminal you started it in, which is the only one of the two that
+    survives an ssh connection. Everything downstream asks the same four
+    questions of either, so the audio loop has no idea which it holds.
+    """
+    global _KEYBOARD
+    if WAKE_MODE == "space":
+        if _KEYBOARD is None:
+            from saathi.keyboard import Keyboard, KeyboardError
+
+            try:
+                _KEYBOARD = Keyboard().start()
+            except KeyboardError as e:
+                raise DeviceError(str(e)) from e
+        return _KEYBOARD
+
+    if WAKE_MODE == "button" and BUTTON_PUSH_TO_TALK:
+        if _KEYBOARD is None:
+            from saathi.button import ButtonError, PushToTalk
+
+            try:
+                _KEYBOARD = PushToTalk().start()
+            except ButtonError as e:
+                raise DeviceError(str(e)) from e
+        return _KEYBOARD
+
+    return None
 
 
 _ENGINE = None
@@ -685,8 +708,21 @@ def run_forever() -> None:
             device = find_device(BUTTON_NAME, BUTTON_DEVICE)
         except ButtonError as e:
             raise DeviceError(str(e)) from e
-        log.info("Saathi starts on a button press")
-        print(f"Saathi is up. Press the button. ({device.name})", flush=True)
+        name = device.name
+        # Closed again straight away. This was only to fail now, with the
+        # device list, rather than on the first press — and the reader
+        # that actually uses it opens its own handle.
+        try:
+            device.close()
+        except Exception:
+            pass
+
+        if BUTTON_PUSH_TO_TALK:
+            log.info("Saathi starts on a held button (%s)", name)
+            print(f"Saathi is up. Hold the button to talk. ({name})", flush=True)
+        else:
+            log.info("Saathi starts on a button press")
+            print(f"Saathi is up. Press the button. ({name})", flush=True)
 
     elif WAKE_MODE == "space":
         from saathi.config import PTT_STYLE

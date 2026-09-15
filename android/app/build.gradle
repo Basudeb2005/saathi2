@@ -1,0 +1,28 @@
+plugins { id "com.android.application" }
+
+android {
+    namespace "ai.saathi.console"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "ai.saathi.console"
+        // Android 8. Below that the Bluetooth permission model is
+        // different again, and there is no phone worth supporting there.
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        // Debug only, on purpose: a release build needs a keystore, and
+        // a keystore in a public repo is not a keystore. Android will
+        // install a debug APK from a file manager once you allow it.
+        debug { }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

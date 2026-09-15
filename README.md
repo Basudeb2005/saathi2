@@ -61,6 +61,12 @@ saathi/
   memory/
     base.py          what a memory backend must do — swap the vendor freely
     supermemory.py   the first implementation
+  console/
+    system.py        nmcli / systemctl / ip, and the parsing of what they say
+    commands.py      the verbs, once, shared by both ways in
+    bluetooth.py     RFCOMM, so it answers with no network at all
+    web.py           the HTTP API and the page the phone installs
+    netwatch.py      no network for 90s -> become one
   wake.py            on-device wake word (openWakeWord or Porcupine)
   button.py          a worn or table button, over evdev — the real answer
   keyboard.py        the spacebar as that button, over ssh, for testing
@@ -261,6 +267,38 @@ Being straight about this, because the gap matters:
 - **Not built yet**: hardware echo cancellation, which is what actually
   fixes barge-in. Push-to-talk (`WAKE_MODE=button`, or `WAKE_MODE=space`
   to try it without hardware) sidesteps it rather than solving it.
+
+### Reachable when it is broken
+
+A headless Pi has a circular problem. To ssh in you need its address; to
+learn its address you need to reach it; to reach it you need the network
+that is often the thing that has gone wrong. Every answer to this that
+works over the network has the same hole in it — mDNS needs both ends on
+one LAN, ssh needs the address, a web console needs wifi to already work.
+
+So the console answers over **Bluetooth**, which is a second radio that
+doesn't care about any of it. Pair once, type `status`, get the address.
+That path has no dependency on the network being right, or on the Pi
+being on the same one as the phone, or on DNS.
+
+Three things follow from that, and each was a decision:
+
+- **The verbs live in one place.** `commands.py` returns sentences;
+  Bluetooth prints them and HTTP wraps them in JSON. Write them twice and
+  the Bluetooth path becomes the one nobody tested — which is the path
+  you need on the bad day.
+- **Apps get `hello`, people get `status`.** One is JSON and is a
+  contract; the other is prose and can be improved. Without the split,
+  rewording a status line silently breaks every installed copy of the
+  app.
+- **No network for ninety seconds and it becomes one.** With a ten-minute
+  retry, because the failure mode of never coming back is a Pi that
+  hotspotted once during a power cut and stayed there until someone
+  noticed — which in an old age home is never.
+
+The gate is a token generated on the Pi and handed out over Bluetooth:
+pairing means being in the room, so physical presence is what gets you
+the key. There is no default token and no way to disable it.
 
 ### Not sounding like a machine
 

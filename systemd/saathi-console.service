@@ -1,0 +1,35 @@
+# The way back in when everything else is broken.
+#
+# Answers over Bluetooth with no network at all, and over HTTP once there
+# is one. Starts before Saathi and stays up whether Saathi does or not —
+# a rescue console that only works when the thing it is rescuing is
+# healthy is not a rescue console.
+#
+# Runs as root on purpose: joining a wifi network and starting a service
+# both need it. Everything over HTTP is gated on a generated token.
+[Unit]
+Description=Saathi console (bluetooth + web)
+After=bluetooth.service NetworkManager.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/%i/saathi2
+Environment=CONSOLE_TOKEN_FILE=/etc/saathi/console-token
+# The units the start/stop buttons act on. Templated like these ones, so
+# the console and the services agree about who they belong to.
+Environment=SAATHI_UNITS=saathi-agent@%i,saathi@%i
+# Advertise the serial port in SDP so a phone's Bluetooth app can see it.
+# Needs bluetoothd --compat, which the installer sets up. Leading "-" so
+# a Pi with no Bluetooth still gets a web console.
+ExecStartPre=-/usr/bin/sdptool add --channel=1 SP
+ExecStart=/home/%i/saathi2/venv/bin/python -m saathi.console
+Restart=always
+RestartSec=5
+# Never give up. This is the service you reach for when the others have
+# failed, so it is the last one that should stop trying.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -328,6 +328,19 @@ BUTTON_DEBOUNCE_S = float(os.getenv("BUTTON_DEBOUNCE_S", "0.6"))
 # rather than two.
 BUTTON_ENDS_SESSION = os.getenv("BUTTON_ENDS_SESSION", "true").lower() in ("1", "true", "yes")
 
+# Hold to talk rather than press to start. evdev reports key-down and
+# key-up exactly, so unlike the terminal version this needs no guessing —
+# and it needs no terminal either, which is what makes a USB keyboard
+# plugged into a headless Pi a working push-to-talk button under systemd.
+#
+# Set BUTTON_KEYS=KEY_SPACE with a real keyboard. The default of "any
+# key" is right for a one-button remote and wrong for something with a
+# hundred of them.
+BUTTON_PUSH_TO_TALK = os.getenv("BUTTON_PUSH_TO_TALK", "false").lower() in ("1", "true", "yes")
+# How long the mic stays open after the key comes up. People let go on
+# the last syllable, and clipping it costs the word.
+BUTTON_HANGOVER_S = float(os.getenv("BUTTON_HANGOVER_S", "0.35"))
+
 # For WAKE_MODE=voice: how loud, and for how long, before it counts as
 # someone talking rather than a door closing.
 VOICE_TRIGGER_RMS = int(os.getenv("VOICE_TRIGGER_RMS", "700"))
@@ -391,3 +404,47 @@ MEMORY_CONTAINER_TAG = os.getenv("MEMORY_CONTAINER_TAG", "saathi-home")
 # actual question and slows every turn.
 MEMORY_RECALL_LIMIT = int(os.getenv("MEMORY_RECALL_LIMIT", "6"))
 MEMORY_TIMEOUT_S = float(os.getenv("MEMORY_TIMEOUT_S", "8"))
+
+
+# ---- Headless console ---------------------------------------------------
+# The answer to "I have no monitor and I don't know its address". A small
+# service that answers over Bluetooth (no network needed at all) and over
+# HTTP (once there is one), so a phone can find the Pi, put it on a wifi
+# network, and start Saathi.
+#
+# It runs as root, because joining a network and starting a service both
+# need to, and it listens on every interface, because a phone has to
+# reach it. Everything over HTTP is gated on a token that is generated on
+# first boot and handed out over Bluetooth — which you can only pair with
+# from the same room.
+CONSOLE_HTTP_PORT = int(os.getenv("CONSOLE_HTTP_PORT", "8765"))
+# RFCOMM channel 1 is the conventional one for a serial profile, and what
+# the installer registers in SDP so phones can see it.
+CONSOLE_BT_CHANNEL = int(os.getenv("CONSOLE_BT_CHANNEL", "1"))
+# Whether `sh` runs arbitrary commands. On, because a console you can't
+# fix anything from is a status page — but this is a root shell reachable
+# from the wifi, so it is one env var away from being off.
+CONSOLE_SHELL = os.getenv("CONSOLE_SHELL", "true").lower() in ("1", "true", "yes")
+# Generated, never chosen. Outside the repo so a `git add -A` can never
+# publish it, and in /etc rather than a home directory because the
+# console runs as root — joining a network and starting a service both
+# need to — and a token that differs depending on who asked for it is a
+# token nobody can find. Read it with: sudo cat /etc/saathi/console-token
+CONSOLE_TOKEN_FILE = os.getenv("CONSOLE_TOKEN_FILE", "/etc/saathi/console-token")
+# What the start/stop buttons act on, in start order — the agent first,
+# so the device has something to talk to when it joins the room.
+SAATHI_UNITS = [
+    u.strip() for u in os.getenv("SAATHI_UNITS", "saathi-agent,saathi").split(",") if u.strip()
+]
+
+# When the Pi can't reach any known network it becomes one, so a phone
+# can always get to the console. NetworkManager's shared mode puts it on
+# 10.42.0.1 and runs DHCP and DNS itself.
+HOTSPOT_SSID = os.getenv("HOTSPOT_SSID", "Saathi-Setup")
+# WPA2 needs eight characters. Change it — this one is in a public repo.
+HOTSPOT_PASSWORD = os.getenv("HOTSPOT_PASSWORD", "saathi123")
+# How long with no network before giving up and becoming an access point.
+HOTSPOT_AFTER_S = int(os.getenv("HOTSPOT_AFTER_S", "90"))
+# And how long to stay one before trying the real networks again, so a
+# router that was merely slow to boot doesn't strand the Pi in setup mode.
+HOTSPOT_RETRY_AFTER_S = int(os.getenv("HOTSPOT_RETRY_AFTER_S", "600"))

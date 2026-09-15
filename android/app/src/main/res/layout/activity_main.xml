@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0F1417"
+    android:fitsSystemWindows="true">
+
+    <!-- The finder. Visible only when we don't know where the Pi is,
+         which after the first successful connection is never again. -->
+    <LinearLayout
+        android:id="@+id/finder"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="28dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Saathi"
+            android:textColor="#E8EEF1"
+            android:textSize="30sp" />
+
+        <TextView
+            android:id="@+id/message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:text="Pair the Pi in your phone's Bluetooth settings first, then tap below. It works with no network at all."
+            android:textColor="#8FA3AD"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/find"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="26dp"
+            android:backgroundTint="#4BB8A9"
+            android:text="Find over Bluetooth"
+            android:textColor="#06100E"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/manual"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="26dp"
+            android:hint="or type its address"
+            android:importantForAutofill="no"
+            android:inputType="textUri"
+            android:textColor="#E8EEF1"
+            android:textColorHint="#5D7079" />
+
+        <Button
+            android:id="@+id/open"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Open" />
+    </LinearLayout>
+
+    <WebView
+        android:id="@+id/web"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+</LinearLayout>

@@ -9,3 +9,14 @@ trunk.json
 logs/*.log*
 .pytest_cache/
 song_cache.json
+
+# The console's key. Lives in /etc on a real install, but a local test
+# run without sudo puts it here, and it must never be committed.
+console-token
+.saathi/
+
+# Built by CI, never committed — a binary in the repo is a binary that
+# stops matching the source.
+android/app/build/
+android/.gradle/
+android/local.properties

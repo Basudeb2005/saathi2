@@ -1,0 +1,20 @@
+# Accept Bluetooth pairing with no screen to confirm it on.
+#
+# A device with no display can't show a PIN, so BlueZ needs an agent that
+# says yes for it. NoInputNoOutput is "just works" pairing: anyone in
+# range during the pairing window can pair. That is the same trade every
+# pair of wireless headphones makes, and it is the gate on the console
+# token rather than on the console itself.
+[Unit]
+Description=Saathi Bluetooth pairing agent
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/bt-agent --capability=NoInputNoOutput
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

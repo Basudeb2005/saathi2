@@ -13,6 +13,7 @@ one at a time.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -350,6 +351,43 @@ def check_clock() -> Result:
     return Result(OK, stamp)
 
 
+def check_console() -> Result:
+    """The way back in when everything else is broken.
+
+    Checked last but worth checking: the whole point of the console is to
+    be running before you need it, and "it wasn't started" is only ever
+    discovered at the moment it would have helped.
+    """
+    from saathi.config import CONSOLE_HTTP_PORT
+    from saathi.console import system as console_system
+
+    # Installed as a template (saathi-console@pi), like the other units,
+    # so the instance name has to be guessed before it can be asked about.
+    user = os.environ.get("SUDO_USER") or os.environ.get("USER") or ""
+    candidates = [f"saathi-console@{user}"] if user else []
+    candidates.append("saathi-console")
+
+    unit = unit_state = None
+    for candidate in candidates:
+        state = console_system.service_state(candidate)
+        if state != "unknown":
+            unit, unit_state = candidate, state
+            break
+
+    if unit is None:
+        return Result(
+            WARN, "not installed — you'll need a monitor if the network changes",
+            "bash scripts/install-console.sh",
+        )
+    if unit_state != "active":
+        return Result(FAIL, f"{unit} is {unit_state}", f"sudo systemctl restart {unit}")
+
+    where = console_system.addresses()
+    if not where:
+        return Result(WARN, "running, but this Pi has no address — reachable over Bluetooth only")
+    return Result(OK, f"http://{where[0].address}:{CONSOLE_HTTP_PORT}")
+
+
 def check_memory() -> Result:
     from saathi.config import AGENT_LANGUAGES, LANGUAGE_NAMES, MEMORY_BACKEND
     from saathi.memory import build_memory
@@ -396,6 +434,7 @@ CHECKS: List[Check] = [
     Check("Radio Browser", check_radio),
     Check("Wake word", check_wake_models),
     Check("Clock", check_clock),
+    Check("Console", check_console, optional=True),
     Check("Memory & language", check_memory, optional=True),
     Check("Calling", check_calling, optional=True),
 ]

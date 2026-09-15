@@ -1,0 +1,6 @@
+// Deliberately spare: plain Java, no AndroidX, no Material, no Kotlin.
+// Every dependency is a version that can go stale and break a build
+// nobody is watching, and this app is one screen and a WebView.
+plugins {
+    id "com.android.application" version "8.5.2" apply false
+}
